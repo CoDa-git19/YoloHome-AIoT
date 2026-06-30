@@ -23,7 +23,7 @@ We use Python Virtual Environments to ensure everyone uses the exact same librar
 ### 2.1 Clone the repository:
 
 ```bash
-git clone [https://github.com/](https://github.com/)[your-username]/YoloHome-AIoT.git
+git clone https://github.com/<username-or-org>/YoloHome-AIoT.git
 cd YoloHome-AIoT
 
 ```
@@ -37,7 +37,12 @@ python -m venv venv
 
 ### 2.3 Activate the virtual environment:
 
-- Windows (Git Bash/PowerShell): 
+- Windows PowerShell:
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+- Windows Git Bash: 
 ```bash
 source venv/Scripts/activate
 ```
@@ -62,6 +67,8 @@ Ask the team member in charge of each module for the secret keys. Create a .env 
 GEMINI_API_KEY="your_api_key"
 ADAFRUIT_IO_USERNAME="your_username"
 ADAFRUIT_IO_KEY="your_key"
+DATABASE_URL="sqlite:///database/smart_home.db"
+FLASK_ENV="development"
 
 ```
 
@@ -70,24 +77,35 @@ To verify your setup is fully working, run the main gateway:
 ```bash
 python system_core/main.py
 ```
-
+To run the Flask dashboard separately:
+```bash
+python web_dashboard/app.py
+```
 ---
 
 ## 3. Project Structure & Boundaries
 
 To avoid merge conflicts, **only work within your assigned module directory**:
 
-`speech_recognition/`: PhoWhisper and VAD integration.
+`modules/speech_recognition/`: PhoWhisper and VAD integration.
 
-`llm_integration/`: Gemini API prompting and JSON parsing.
+`modules/llm_integration/`: Gemini API prompting and JSON parsing.
 
-`face_recognition/`: dlib embeddings and OpenCV frame processing.
+`modules/face_recognition/`: dlib embeddings and OpenCV frame processing.
 
-`hardware_gateway/`: Yolo:Bit serial communication and MQTT.
+`modules/hardware_gateway/`: Yolo:Bit serial communication and MQTT.
+
+`services/`: Application-level services, including command orchestration, authentication flow, logging, and rule handling.
 
 `system_core/`: System integration and Design Patterns (Observer, Strategy).
 
 `web_dashboard/`: Flask application and UI.
+
+`database/`: SQLite schema, initialization script, and database documentation.
+
+`config/`: Shared system configuration such as device registry and LLM command schema.
+
+`tests/`: Unit tests and mock integration tests.
 
 ---
 
