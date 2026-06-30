@@ -1,27 +1,94 @@
-# Python core
+# =========================
+# Python cache / build
+# =========================
 __pycache__/
 *.py[cod]
+*$py.class
 .Python
-env/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# Virtual environments
+# =========================
 venv/
 .venv/
+env/
+ENV/
+
+# =========================
+# Environment variables / secrets
+# =========================
 .env
+.env.*
+!.env.example
 
-# Database
-*.sqlite3
+# =========================
+# Database files
+# =========================
 *.db
+*.sqlite
+*.sqlite3
+database/*.db
+database/*.sqlite
+database/*.sqlite3
 
-# AI Models & Large Data (Rất quan trọng)
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# AI models / weights / large binary files
+# =========================
+models/*
+!models/.gitkeep
+
 *.pkl
+*.joblib
 *.h5
 *.onnx
 *.pt
+*.pth
 *.bin
-dataset/
-data/
-models/
-*.wav
+*.safetensors
 
-# IDEs and OS files
+# =========================
+# Dataset / audio / snapshots
+# Keep folder structure, ignore actual large/private data
+# =========================
+data/*
+!data/.gitkeep
+!data/sample/
+data/sample/*
+!data/sample/.gitkeep
+
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# Optional dataset folders
+data/audio/
+data/face_dataset/
+data/snapshots/
+
+# =========================
+# Test / coverage cache
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# IDE / OS files
+# =========================
 .vscode/
+.idea/
 .DS_Store
+Thumbs.db

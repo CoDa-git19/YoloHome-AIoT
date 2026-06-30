@@ -42,13 +42,17 @@ python -m venv venv
 
 ### 2.3 Kích hoạt môi trường ảo:
 
-- Windows (Git Bash/PowerShell):
+- Windows PowerShell:
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+- Windows Git Bash: 
 ```bash
 source venv/Scripts/activate
 ```
 
 - Mac/Linux:
-
 ```bash
 source venv/bin/activate
 ```
@@ -69,6 +73,8 @@ Hãy hỏi thành viên nhóm phụ trách từng module về các khóa bí m�
 GEMINI_API_KEY="khóa_api_của_bạn"
 ADAFRUIT_IO_USERNAME="tên_người_dùng_của_bạn"
 ADAFRUIT_IO_KEY="khóa_của_bạn"
+DATABASE_URL="sqlite:///database/smart_home.db"
+FLASK_ENV="development"
 
 ```
 
@@ -80,6 +86,12 @@ ADAFRUIT_IO_KEY="khóa_của_bạn"
 python system_core/main.py
 
 ```
+Để chạy Flask dashboard riêng lẻ:
+
+```bash
+python web_dashboard/app.py
+
+```
 
 ---
 
@@ -87,17 +99,25 @@ python system_core/main.py
 
 Để tránh xung đột khi hợp nhất, **chỉ làm việc trong thư mục module được chỉ định của bạn**:
 
-`speech_recognition/`: Tích hợp PhoWhisper và VAD.
+`modules/speech_recognition/`: Tích hợp PhoWhisper và VAD.
 
-`llm_integration/`: Nhắc API Gemini và phân tích cú pháp JSON.
+`modules/llm_integration/`: Nhắc API Gemini và phân tích cú pháp JSON.
 
-`face_recognition/`: Nhúng dlib và xử lý khung hình OpenCV.
+`modules/face_recognition/`: Nhúng dlib và xử lý khung hình OpenCV.
 
-`hardware_gateway/`: Giao tiếp nối tiếp Yolo:Bit và MQTT.
+`modules/hardware_gateway/`: Giao tiếp nối tiếp Yolo:Bit và MQTT.
+
+services/: Chứa logic mức ứng dụng như điều phối command, xác thực, ghi log và xử lý rule.
 
 `system_core/`: Tích hợp hệ thống và các mẫu thiết kế (Observer, Strategy).
 
 `web_dashboard/`: Ứng dụng Flask và giao diện người dùng.
+
+`database/`: Thiết kế SQLite schema, script khởi tạo database và tài liệu database.
+
+`config/`: Cấu hình chung như device registry và command schema.
+
+`tests/`: Unit test và mock integration test.
 
 ---
 
