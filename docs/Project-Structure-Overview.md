@@ -933,6 +933,7 @@ rule_service.py hoặc dashboard tạo schedule
 **STT owner:**
 ```
 modules/speech_recognition/
+tests/test_stt_module.py
 ```
 
 **LLM owner:**
@@ -943,16 +944,21 @@ config/device_registry.json
 tests/test_validator.py
 tests/test_llm_module.py
 tests/test_command_pipeline.py
+tests/test_mock_commands.py
+tests/test_prompt_building.py
+tests/tests_config.py
 ```
 
 **Face owner:**
 ```
 modules/face_recognition/
+tests/test_face_module.py
 ```
 
 **Hardware owner:**
 ```
 modules/hardware_gateway/
+tests/test_hardware_module.py
 ```
 
 **Database/System owner:**
@@ -963,6 +969,8 @@ services/command_service.py
 services/auth_service.py
 services/rule_service.py
 system_core/
+tests/test_auth_service.py
+tests/test_rule_service.py
 ```
 
 **Dashboard owner:**
@@ -970,6 +978,7 @@ system_core/
 web_dashboard/
 templates/
 static/
+tests/test_dashboard_routes.py
 ```
 
 ---
