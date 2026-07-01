@@ -49,5 +49,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 # =========================
 # Runtime config
 # =========================
-USE_MOCK_LLM = os.getenv("USE_MOCK_LLM", "false").lower() == "true"
-FACE_AUTH_THRESHOLD = float(os.getenv("FACE_AUTH_THRESHOLD", "0.80"))
+USE_MOCK_LLM = os.getenv("USE_MOCK_LLM", "false").strip().lower() == "true"
+
+_face_auth_threshold_raw = os.getenv("FACE_AUTH_THRESHOLD", "0.80")
+
+try:
+    FACE_AUTH_THRESHOLD = float(_face_auth_threshold_raw)
+except ValueError as exc:
+    raise ValueError(
+        f"Invalid FACE_AUTH_THRESHOLD={_face_auth_threshold_raw!r}; "
+        "expected a float, e.g. 0.80."
+    ) from exc
