@@ -38,6 +38,8 @@ Vì nhóm của chúng mình gồm 5 thành viên làm việc trong các lĩnh v
 └── web_dashboard/          # Flask web UI and HTML templates
     ├── app.py
     └── templates/          # UI views (agent_console, command_log, etc.)
+```
+
 ---
 
 ## 1. Điều kiện tiên quyết & Bộ công cụ

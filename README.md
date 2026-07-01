@@ -39,6 +39,8 @@ Since our team consists of 5 members working across completely different domains
 └── web_dashboard/          # Flask web UI and HTML templates
     ├── app.py
     └── templates/          # UI views (agent_console, command_log, etc.)
+```
+
 ---
 
 ## 1. Prerequisites & Toolchain
