@@ -1,0 +1,25 @@
+{
+    "required_fields": [
+      "intent",
+      "action",
+      "device",
+      "room",
+      "face_auth",
+      "condition",
+      "response"
+    ],
+    "intents": [
+      "control_device",
+      "query_status",
+      "create_rule",
+      "clarify",
+      "reject"
+    ],
+    "sensitive_actions": [
+      {
+        "device": "door",
+        "action": "open",
+        "face_auth": true
+      }
+    ]
+  }

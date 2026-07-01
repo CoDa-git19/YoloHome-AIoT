@@ -1,0 +1,13 @@
+{
+    "living_room": {
+      "light": ["turn_on", "turn_off", "get_status"],
+      "fan": ["turn_on", "turn_off", "get_status"]
+    },
+    "bedroom": {
+      "light": ["turn_on", "turn_off", "get_status"],
+      "fan": ["turn_on", "turn_off", "get_status"]
+    },
+    "main_door": {
+      "door": ["open", "close", "get_status"]
+    }
+  }
