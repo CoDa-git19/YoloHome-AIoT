@@ -4,6 +4,41 @@ Welcome to the **YoloHome-AIoT** project! This repository contains the source co
 
 Since our team consists of 5 members working across completely different domains (AI, UI, and Hardware), strict adherence to this workflow is **mandatory** to prevent integration conflicts and broken builds.
 
+
+## 🗂️ Project Structure
+
+```text
+.
+├── config/                 # System configurations and JSON schemas
+│   ├── command_schema.json
+│   ├── device_registry.json
+│   └── settings.py
+├── data/                   # Local data storage (.gitkeep)
+├── database/               # Database initialization and schemas
+│   ├── README_DB.md
+│   ├── init_db.py
+│   └── schema.sql
+├── docs/                   # Project documentation
+│   └── Project-Structure-Overview.md
+├── modules/                # Core system modules
+│   ├── face_recognition/   # Camera & Face ID processing
+│   ├── hardware_gateway/   # Yolo:Bit & MQTT communication
+│   ├── llm_integration/    # Gemini/LLM prompt and parsing
+│   └── speech_recognition/ # Speech-to-Text processing
+├── services/               # Business logic and cross-module services
+│   ├── auth_service.py
+│   ├── command_service.py
+│   ├── logging_service.py
+│   └── rule_service.py
+├── system_core/            # Main orchestration
+│   └── main.py
+├── tests/                  # Unit and integration tests
+│   ├── test_command_pipeline.py
+│   ├── test_llm_module.py
+│   └── test_validator.py
+└── web_dashboard/          # Flask web UI and HTML templates
+    ├── app.py
+    └── templates/          # UI views (agent_console, command_log, etc.)
 ---
 
 ## 1. Prerequisites & Toolchain
@@ -111,11 +146,7 @@ To avoid merge conflicts, **only work within your assigned module directory**:
 
 ## 4. Branching Strategy (GitHub Flow)
 
-We use a strict branching model to protect the system's stability.
-
-- `main`: The "sacred" branch. Always stable, ready for presentation. **DO NOT touch**.
-
-- `develop`: The integration playground where all modules meet. **DO NOT code directly here**.
+- `main`: The central branch for the project. All working code lives here. **DO NOT push directly to this branch**; always use a Pull Request.
 
 ---
 
@@ -124,8 +155,8 @@ We use a strict branching model to protect the system's stability.
 ### 5.1 Always sync with the latest integration code first:
 
 ```bash
-git checkout develop
-git pull origin develop
+git checkout main
+git pull origin main
 ```
 
 ### 5.2 Create a specific feature branch for your work:
@@ -148,13 +179,13 @@ git push origin feature/face-auth-pipeline
 
 ## 6. Pull Requests & Reviews
 
-Once your feature works perfectly on your machine, it's time to merge it into `develop`.
+Once your feature works perfectly on your machine, it's time to merge it into `main`.
 
 ### 6.1 Open a Pull Request (PR):
 
 - Go to GitHub and click **Compare & pull request** on your pushed branch.
 
-- Set the base branch to `develop`.
+- Set the base branch to `main`.
 
 ### 6.2 The PR Review Rule (CRITICAL):
 
@@ -166,9 +197,9 @@ Once your feature works perfectly on your machine, it's time to merge it into `d
 
 ### 6.3 Wait for Approval:
 
-Your code must receive at least **1 Approval** before the "Merge pull request" button becomes active.
+- Your code must receive at least **1 Approval** before the "Merge pull request" button becomes active.
 
-The integration lead will pull your branch locally to test memory consumption and threading conflicts before approving.
+- After creating the PR, simply click **Merge pull request**.
 
 ## 🆘 7. Troubleshooting & Rules of Thumb
 - **Never push AI models (.pt, .h5, .bin) to GitHub:** Our `.gitignore` blocks them. Download weights locally and put them in the `models/` folder.
