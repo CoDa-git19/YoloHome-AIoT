@@ -19,4 +19,7 @@ ctranslate2==4.1.0
 soundfile==0.12.1
 
 # --- LLM Integration ---
-google-generativeai==0.4.1
+google-genai
+
+# --- Testing ---
+pytest
