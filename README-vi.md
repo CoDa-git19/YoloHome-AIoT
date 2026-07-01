@@ -4,6 +4,40 @@ Chào mừng bạn đến với dự án **YoloHome-AIoT**! Kho lưu trữ này 
 
 Vì nhóm của chúng mình gồm 5 thành viên làm việc trong các lĩnh vực hoàn toàn khác nhau (AI, Giao diện người dùng và Phần cứng), việc tuân thủ nghiêm ngặt quy trình làm việc này là **bắt buộc** để tránh xung đột tích hợp và lỗi biên dịch.
 
+## 🗂️ Project Structure
+
+```text
+.
+├── config/                 # System configurations and JSON schemas
+│   ├── command_schema.json
+│   ├── device_registry.json
+│   └── settings.py
+├── data/                   # Local data storage (.gitkeep)
+├── database/               # Database initialization and schemas
+│   ├── README_DB.md
+│   ├── init_db.py
+│   └── schema.sql
+├── docs/                   # Project documentation
+│   └── Project-Structure-Overview.md
+├── modules/                # Core system modules
+│   ├── face_recognition/   # Camera & Face ID processing
+│   ├── hardware_gateway/   # Yolo:Bit & MQTT communication
+│   ├── llm_integration/    # Gemini/LLM prompt and parsing
+│   └── speech_recognition/ # Speech-to-Text processing
+├── services/               # Business logic and cross-module services
+│   ├── auth_service.py
+│   ├── command_service.py
+│   ├── logging_service.py
+│   └── rule_service.py
+├── system_core/            # Main orchestration
+│   └── main.py
+├── tests/                  # Unit and integration tests
+│   ├── test_command_pipeline.py
+│   ├── test_llm_module.py
+│   └── test_validator.py
+└── web_dashboard/          # Flask web UI and HTML templates
+    ├── app.py
+    └── templates/          # UI views (agent_console, command_log, etc.)
 ---
 
 ## 1. Điều kiện tiên quyết & Bộ công cụ
@@ -123,11 +157,7 @@ services/: Chứa logic mức ứng dụng như điều phối command, xác th�
 
 ## 4. Chiến lược phân nhánh (GitHub Flow)
 
-Chúng mình sử dụng mô hình phân nhánh nghiêm ngặt để bảo vệ tính ổn định của hệ thống.
-
 - `main`: Nhánh "thiêng liêng". Luôn ổn định, sẵn sàng để trình bày. **KHÔNG được động vào**.
-
-- `develop`: Sân chơi tích hợp nơi tất cả các mô-đun gặp nhau. **KHÔNG được viết code trực tiếp ở đây**.
 
 ---
 
@@ -137,8 +167,8 @@ Chúng mình sử dụng mô hình phân nhánh nghiêm ngặt để bảo vệ 
 
 ```bash
 
-git checkout develop
-git pull origin develop
+git checkout main
+git pull origin main
 ```
 
 ### 5.2 Tạo một nhánh tính năng cụ thể cho công việc của bạn:
@@ -163,13 +193,13 @@ git push origin feature/face-auth-pipeline
 ---
 ## 6. Yêu cầu kéo (Pull Request) & Đánh giá (Review)
 
-Sau khi tính năng của bạn hoạt động hoàn hảo trên máy, đã đến lúc hợp nhất nó vào nhánh `develop`.
+Sau khi tính năng của bạn hoạt động hoàn hảo trên máy, đã đến lúc hợp nhất nó vào nhánh `main`.
 
 ### 6.1 Mở Pull Request (PR):
 
 - Truy cập GitHub và nhấp vào **Compare & pull request** trên nhánh đã đẩy của bạn.
 
-- Đặt nhánh cơ sở là `develop`.
+- Đặt nhánh cơ sở là `main`.
 
 ### 6.2 Quy tắc đánh giá PR (QUAN TRỌNG):
 
@@ -181,9 +211,9 @@ Sau khi tính năng của bạn hoạt động hoàn hảo trên máy, đã đ�
 
 ### 6.3 Chờ phê duyệt:
 
-Code của bạn phải nhận được ít nhất **1 Approval** trước khi nút "Merge pull request" được kích hoạt.
+- Code của bạn phải nhận được ít nhất **1 Approval** trước khi nút "Merge pull request" được kích hoạt.
 
-Trưởng nhóm tích hợp sẽ kéo nhánh của bạn về máy cục bộ để kiểm tra mức tiêu thụ bộ nhớ và xung đột luồng trước khi phê duyệt.
+- Sau khi PR để phê duyệt, nhấn **Merge pull request**
 
 ## 🆘 7. Khắc phục sự cố & Quy tắc chung
 - **Không bao giờ đẩy các mô hình AI (.pt, .h5, .bin) lên GitHub:** Tệp `.gitignore` sẽ chặn chúng. Chỉ nên tải về máy cục bộ và đặt chúng vào thư mục `models/`.
