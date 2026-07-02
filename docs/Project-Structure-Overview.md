@@ -984,3 +984,28 @@ tests/test_dashboard_routes.py
 ---
 
 **Chốt ngắn gọn:** `modules/` xử lý chuyên môn từng phần, `services/` nối các phần lại, `database/` lưu log, `system_core/` chạy pipeline tổng, `web_dashboard/` đọc DB để hiển thị.
+
+
+## 12. Core Architecture & Design Patterns
+
+Để đảm bảo các module giao tiếp trơn tru và dễ dàng mở rộng sau này, toàn bộ hệ thống tuân thủ 3 Design Pattern cốt lõi được định nghĩa sẵn trong `system_core/`. **Mọi thành viên bắt buộc phải implement đúng các Interface này.**
+
+### a) Strategy Pattern (Xử lý AI - STT & LLM)
+* **Mục tiêu:** Tách biệt thuật toán AI khỏi logic hệ thống.
+* **Cách hoạt động:** `system_core/strategies.py` định nghĩa sẵn `STTStrategy` và `LLMStrategy`.
+* **Trách nhiệm:** * Module STT (PhoWhisper) phải kế thừa `STTStrategy` và implement hàm `transcribe(audio)`.
+    * Module LLM (Gemini) phải kế thừa `LLMStrategy` và implement hàm `parse_command(text)`.
+    * *Lợi ích:* Nếu sau này đổi model AI khác, chỉ cần viết class mới, không cần sửa đổi `main.py`.
+
+### b) Observer Pattern (Luồng dữ liệu Hardware & Cảm biến)
+* **Mục tiêu:** Tự động thông báo khi có sự kiện hoặc dữ liệu mới từ Yolo:Bit mà không cần liên kết cứng (hard-code).
+* **Cách hoạt động:** `system_core/observers.py` định nghĩa `Subject` (Nguồn phát) và `Observer` (Bên lắng nghe).
+* **Trách nhiệm:**
+    * `HardwareGateway` đóng vai trò là Subject, liên tục đọc cảm biến và gọi hàm `notify()`.
+    * Các module như RuleService (kiểm tra ngưỡng nhiệt độ) hoặc MQTTPublisher đóng vai trò là Observer, tự động chạy hàm `update()` khi có dữ liệu mới.
+
+### c) Command Pattern (Thực thi thiết bị IoT)
+* **Mục tiêu:** Chuẩn hóa đầu ra của LLM thành các object hành động cụ thể để dễ quản lý.
+* **Cách hoạt động:** `system_core/commands.py` định nghĩa interface `Command` bắt buộc phải có 2 hàm: `execute()` và `undo()`.
+* **Trách nhiệm:** * Mỗi hành động (ví dụ: `TurnOnLightCommand`, `OpenDoorCommand`) là một class riêng lẻ.
+    * *Lợi ích:* Giúp `CommandService` dễ dàng ra lệnh, lưu log vào Database (`execution_status`), hoặc thu hồi lệnh (undo) nếu xảy ra lỗi phần cứng.
