@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Any
 
 # --- INTERFACES ---
 class Observer(ABC):
     @abstractmethod
-    def update(self, sensor_data: Dict[str, float]):
+    def update(self, sensor_data: Dict[str, Any]):
         """This function will be called when new sensor data is available."""
         pass
 
@@ -22,7 +22,7 @@ class Subject(ABC):
         """Remove a Subscriber"""
         self._observers.remove(observer)
 
-    def notify(self, sensor_data: Dict[str, float]):
+    def notify(self, sensor_data: Dict[str, Any]):
         """Notify all Subscribers of new sensor data"""
         for observer in self._observers:
             observer.update(sensor_data)
@@ -30,14 +30,14 @@ class Subject(ABC):
 # --- IMPLEMENTATIONS ---
 # # Example
 # class AdafruitPublisher(Observer):
-#     def update(self, sensor_data: Dict[str, float]):
+#     def update(self, sensor_data: Dict[str, Any]):
 #         print(f"[Adafruit IO] Upload data to the cloud: {sensor_data}")
 
 # class ThresholdChecker(Observer):
-#     def update(self, sensor_data: Dict[str, float]):
+#     def update(self, sensor_data: Dict[str, Any]):
 #         if sensor_data.get("temperature", 0) > 35.0:
 #             print("[WARNING] Excessive temperature—fan automatically turned on!")
 
 # class DashboardUpdater(Observer):
-#     def update(self, sensor_data: Dict[str, float]):
+#     def update(self, sensor_data: Dict[str, Any]):
 #         print(f"[Dashboard UI] Update chart with data: {sensor_data}")

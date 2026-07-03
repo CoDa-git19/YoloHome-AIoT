@@ -10,7 +10,7 @@ class STTStrategy(ABC):
 
 class LLMStrategy(ABC):
     @abstractmethod
-    def parse_command(self, text: str) -> Dict[str, Any]:
+    def parse_and_validate(self, transcript: str) -> Dict[str, Any]:
         """Parse text into a standard JSON string"""
         pass
     
