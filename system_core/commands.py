@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from modules.hardware_gateway.hardware_module import HardwareModule
 
 # --- INTERFACES ---
 class Command(ABC):
@@ -14,7 +15,7 @@ class Command(ABC):
 
 # --- IMPLEMENTATIONS (Map the LLM's JSON output to these classes) ---
 # class TurnOnLightCommand(Command):
-#     def __init__(self, room: str):
+#     def __init__(self, hardware_module: HardwareModule, room: str):
 #         self.room = room
 
 #     def execute(self) -> bool:
@@ -27,22 +28,39 @@ class Command(ABC):
 #         # Code to send Serial/MQTT signals to Yolo:Bit
 #         return True
 
-# Invoker
-class CommandInvoker:
-    def __init__(self):
-        self._history = []
 
-    def execute_command(self, command: Command):
-        """Execute the command and save it to history if successful"""
-        if command.execute():
-            self._history.append(command)
-            # Later on, the database can be called here to log the 'success' status
-            # print("[Database] Log saved successfully.")
+class TurnOnLightCommand(Command):
+    def __init__(self, hardware_module: HardwareModule, room: str):
+        # Inject the Receiver (HardwareModule) via Dependency Injection
+        self.hardware = hardware_module
+        self.room = room
 
-    def undo_last_command(self):
-        """Remove the last command from history and execute its undo() method"""
-        if self._history:
-            command = self._history.pop()
-            command.undo()
-            # Update DB to 'undo' status
-            # print("[Database] Undo log saved.")
+    def execute(self) -> bool:
+        print(f"[Command] Sending command to turn on the room light: {self.room}")
+        # Call the Receiver to perform the work (e.g., send Serial/MQTT signals to Yolo:Bit)
+        payload = {"device": "light", "action": "turn_on", "room": self.room}
+        result = self.hardware.execute_command(payload)
+        return result.get("status") == "success"
+
+    def undo(self) -> bool:
+        print(f"[Command] Undo: Sending command to turn off the room light: {self.room}")
+        payload = {"device": "light", "action": "turn_off", "room": self.room}
+        result = self.hardware.execute_command(payload)
+        return result.get("status") == "success"
+
+class TurnOffFanCommand(Command):
+    def __init__(self, hardware_module: HardwareModule, room: str):
+        self.hardware = hardware_module
+        self.room = room
+
+    def execute(self) -> bool:
+        print(f"[Command] Sending command to turn off the room fan: {self.room}")
+        payload = {"device": "fan", "action": "turn_off", "room": self.room}
+        result = self.hardware.execute_command(payload)
+        return result.get("status") == "success"
+
+    def undo(self) -> bool:
+        print(f"[Command] Undo: Sending command to turn on the room fan: {self.room}")
+        payload = {"device": "fan", "action": "turn_on", "room": self.room}
+        result = self.hardware.execute_command(payload)
+        return result.get("status") == "success"
