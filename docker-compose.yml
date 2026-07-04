@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    image: yolohome-aiot
+    container_name: yolohome_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"          # Flask web dashboard
+    volumes:
+      - ./database:/app/database   # SQLite database persistence
+      - ./data:/app/data           # Runtime data (recordings, captures)
+      - ./config:/app/config       # Device registry, command schema
+    devices:
+      # - "/dev/ttyUSB0:/dev/ttyUSB0"
+      # - "/dev/ttyACM0:/dev/ttyACM0"
+      - "/dev/video0:/dev/video0"  # Camera for face recognition
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - DATABASE_URL=sqlite:///database/yolohome.db
+      - USE_MOCK_LLM=${USE_MOCK_LLM:-false}
+    # Required for camera and serial access on Linux hosts
+    privileged: false
+    group_add:
+      - "dialout"   # serial port access
+      - "video"     # camera access
+
+volumes: {}
