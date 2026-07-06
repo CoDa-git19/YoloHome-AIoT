@@ -121,7 +121,7 @@ GEMINI_MODEL="gemini-2.5-flash"
 ADAFRUIT_IO_USERNAME="your_username"
 ADAFRUIT_IO_KEY="your_key"
 
-DATABASE_URL="sqlite:///database/smart_home.db"
+DATABASE_URL="sqlite:///database/yolohome.db"
 FLASK_ENV="development"
 
 FACE_AUTH_THRESHOLD=0.80
