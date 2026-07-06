@@ -163,6 +163,14 @@ class CommandService:
             result_status = llm_result.get("log_result") or "rejected: unknown_device"
             execution_status = "rejected"
 
+        elif next_step == "registry_request":
+            result_status = "waiting_admin_review"
+            execution_status = "registry_request"
+            response_text = command.get(
+                "response",
+                "Yêu cầu đăng ký phòng hoặc thiết bị mới đang chờ quản trị viên xem xét.",
+            )
+
         else:
             result_status = llm_result.get("log_result") or "fail: validation"
             execution_status = "failed"
@@ -182,7 +190,12 @@ class CommandService:
             "command_id": command_id,
             "ok": bool(
                 llm_result.get("ok")
-                and execution_status in {"success", "waiting_auth", "clarify"}
+                and execution_status in {
+                    "success",
+                    "waiting_auth",
+                    "clarify",
+                    "registry_request",
+                }
             ),
             "next_step": next_step,
             "response": response_text,
@@ -271,6 +284,12 @@ class CommandService:
         except Exception as exc:
             log_error("command_service", f"Failed to update command log: {exc}")
 
+    def _is_undoable(self, command: Command) -> bool:
+        """
+        Return True only for commands that have a meaningful undo action.
+        """
+        return getattr(command, "undo_action", None) is not None
+    
     def _execute_hardware_action(self, command_data: dict[str, Any]) -> bool:
         """
         Execute hardware action through Command Pattern.
@@ -285,7 +304,7 @@ class CommandService:
             command = self.create_command(command_data)
             success = command.execute()
 
-            if success:
+            if success and self._is_undoable(command):
                 self.command_history.append(command)
 
             return success

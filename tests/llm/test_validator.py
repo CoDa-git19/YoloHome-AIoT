@@ -1,4 +1,4 @@
-from modules.llm_integration.validator import validate_command
+from modules.llm_integration.validator import validate_command, validate_condition
 
 
 DEVICE_REGISTRY = {
@@ -28,6 +28,7 @@ COMMAND_SCHEMA = {
         "create_rule",
         "clarify",
         "reject",
+        "registry_request",
     ],
     "sensitive_actions": [
         {
@@ -150,3 +151,49 @@ def test_invalid_create_rule_condition():
 
     assert result["passed"] is False
     assert result["code"] == "invalid_condition"
+
+
+def test_invalid_condition_null_value():
+    result = validate_condition(
+        {
+            "sensor": "temperature",
+            "operator": ">",
+            "value": None,
+        }
+    )
+
+    assert result["passed"] is False
+    assert result["code"] == "invalid_condition"
+
+
+def test_valid_condition_zero_value():
+    result = validate_condition(
+        {
+            "sensor": "light",
+            "operator": "==",
+            "value": 0,
+        }
+    )
+
+    assert result["passed"] is True
+    assert result["code"] == "valid_condition"
+
+def test_registry_request_intent_passes_validation():
+    command = {
+        "intent": "registry_request",
+        "action": None,
+        "device": None,
+        "room": None,
+        "face_auth": False,
+        "condition": None,
+        "response": "Yêu cầu thêm thiết bị mới.",
+    }
+
+    result = validate_command(
+        command=command,
+        device_registry=DEVICE_REGISTRY,
+        command_schema=COMMAND_SCHEMA,
+    )
+
+    assert result["passed"] is True
+    assert result["code"] == "registry_request"

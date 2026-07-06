@@ -50,6 +50,13 @@ def validate_condition(condition: Any) -> dict[str, Any]:
             "message": f"Missing condition fields: {sorted(missing)}",
         }
 
+    if condition.get("value") is None:
+        return {
+            "passed": False,
+            "code": "invalid_condition",
+            "message": "Condition value must not be null.",
+        }
+
     if condition["sensor"] not in VALID_SENSORS:
         return {
             "passed": False,
@@ -62,6 +69,15 @@ def validate_condition(condition: Any) -> dict[str, Any]:
             "passed": False,
             "code": "invalid_condition",
             "message": f"Unsupported operator: {condition['operator']}",
+        }
+
+    try:
+        float(condition["value"])
+    except (TypeError, ValueError):
+        return {
+            "passed": False,
+            "code": "invalid_condition",
+            "message": "Condition value must be numeric.",
         }
 
     return {
@@ -101,7 +117,7 @@ def validate_command(
             "message": f"Invalid intent: {intent}",
         }
 
-    if intent in {"clarify", "reject"}:
+    if intent in {"clarify", "reject", "registry_request"}:
         return {
             "passed": True,
             "code": intent,

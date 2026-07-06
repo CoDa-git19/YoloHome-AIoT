@@ -120,16 +120,24 @@ def test_command_service_create_rule_flow():
     assert active_rules[0]["room"] == "living_room"
 
 
-def test_command_service_reject_flow():
-    """CommandService rejects unsupported room/device."""
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "bật máy lạnh phòng bếp",
+        "bật tivi phòng khách",
+    ],
+)
+def test_command_service_registry_request_flow(transcript):
+    """CommandService handles unsupported room/device as registry request."""
     cmd_service = CommandService(use_mock=True)
 
-    result = cmd_service.handle_transcript("bật máy lạnh phòng bếp")
+    result = cmd_service.handle_transcript(transcript)
 
-    assert result["ok"] is False
-    assert result["next_step"] == "reject"
-    assert result["execution_status"] == "rejected"
-    assert result["result"] == "rejected: unknown_device"
+    assert result["ok"] is True
+    assert result["next_step"] == "registry_request"
+    assert result["execution_status"] == "registry_request"
+    assert result["result"] == "waiting_admin_review"
+    assert result["command"]["intent"] == "registry_request"
 
 
 def test_rule_service_trigger_evaluation():

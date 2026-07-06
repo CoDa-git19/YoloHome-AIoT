@@ -107,6 +107,17 @@ def test_create_close_door_command():
     assert isinstance(command, CloseDoorCommand)
 
 
+def test_close_door_command_is_not_added_to_history():
+    service = CommandService(use_mock=True)
+
+    result = service.handle_transcript("đóng cửa chính")
+
+    assert result["ok"] is True
+    assert result["next_step"] == "execute"
+    assert result["result"] == "success"
+    assert len(service.command_history) == 0
+
+
 def test_create_get_status_command():
     service = CommandService(use_mock=True)
 
@@ -159,4 +170,14 @@ def test_undo_last_command():
     undo_result = service.undo_last_command()
 
     assert undo_result is True
+    assert len(service.command_history) == 0
+
+def test_get_status_command_is_not_added_to_history():
+    service = CommandService(use_mock=True)
+
+    result = service.handle_transcript("quạt phòng ngủ đang thế nào")
+
+    assert result["ok"] is True
+    assert result["next_step"] == "execute"
+    assert result["result"] == "success"
     assert len(service.command_history) == 0

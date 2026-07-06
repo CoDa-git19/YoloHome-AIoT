@@ -160,6 +160,7 @@ class GetStatusCommand(Command):
     This command represents get_status uniformly with device-control commands.
     It has no meaningful undo operation.
     """
+    undo_action: str | None = None
 
     def __init__(self, hardware: HardwareReceiver, device: str, room: str) -> None:
         self.hardware = hardware
@@ -182,14 +183,14 @@ class GetStatusCommand(Command):
         return bool(result)
 
     def undo(self) -> bool:
-        return True
+        return False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "device": self.device,
             "action": self.action,
             "room": self.room,
-            "undo_action": None,
+            "undo_action": self.undo_action,
         }
 
 
