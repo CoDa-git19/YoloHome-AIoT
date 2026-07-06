@@ -1,30 +1,73 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any
+from __future__ import annotations
 
-# --- INTERFACES ---
+from abc import ABC, abstractmethod
+from typing import Any
+
+
 class STTStrategy(ABC):
+    """
+    Strategy interface for Speech-to-Text engines.
+
+    The main pipeline should depend on this interface instead of depending
+    directly on a specific STT model or library.
+
+    Example concrete implementations:
+    - PhoWhisperSTTStrategy
+    - GoogleSTTStrategy
+    - MockSTTStrategy
+    """
+
     @abstractmethod
     def transcribe(self, audio_data: bytes) -> str:
-        """Convert speech to text"""
-        pass
+        """
+        Convert audio bytes into a text transcript.
+
+        Args:
+            audio_data: Raw audio data in bytes.
+
+        Returns:
+            Transcribed text.
+        """
+        raise NotImplementedError
+
 
 class LLMStrategy(ABC):
+    """
+    Strategy interface for LLM-based command understanding.
+
+    CommandService should depend on this interface instead of calling
+    Gemini, mock parser, or any concrete LLM module directly.
+
+    Example concrete implementations:
+    - GeminiLLMStrategy
+    - MockLLMStrategy
+    - LocalLLMStrategy
+    """
+
     @abstractmethod
-    def parse_and_validate(self, transcript: str) -> Dict[str, Any]:
-        """Parse text into a standard JSON string"""
-        pass
-    
-# --- IMPLEMENTATIONS ---
-# class PhoWhisperStrategy(STTStrategy)
-    # # Example
-    # def transcribe(self, audio_data: bytes) -> str:
-    #         # Code to load the PhoWhisper model and process audio goes here
-    #         print("Processing audio...")
-    #         return "Turn on the living room lights"
-    
-# class GeminiStrategy(LLMStrategy)
-    # # Example
-    # def parse_command(self, text: str) -> Dict[str, Any]:
-    #     # Code to call the Gemini API is here
-    #     print(f"Analyzing the sentence: {text}")
-    #     return {"intent": "control_device", "action": "turn_on", "device": "light"}
+    def parse_and_validate(
+        self,
+        transcript: str,
+        sensor_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Parse a text transcript into a validated command object.
+
+        Args:
+            transcript: User command text, usually from STT or text input.
+            sensor_data: Optional current sensor values for context-aware commands.
+
+        Returns:
+            A standard LLM result dictionary:
+            {
+                "ok": bool,
+                "transcript": str,
+                "command": dict | None,
+                "validation": dict,
+                "next_step": str,
+                "latency_ms": int,
+                "log_result": str | None,
+                "error": str | None
+            }
+        """
+        raise NotImplementedError

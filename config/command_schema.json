@@ -13,7 +13,8 @@
       "query_status",
       "create_rule",
       "clarify",
-      "reject"
+      "reject",
+      "registry_request"
     ],
     "sensitive_actions": [
       {

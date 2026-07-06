@@ -42,3 +42,17 @@ CREATE TABLE IF NOT EXISTS error_log (
     module    TEXT    NOT NULL,
     message   TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS automation_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_id  INTEGER,
+    sensor      TEXT    NOT NULL,
+    operator    TEXT    NOT NULL,
+    value       REAL    NOT NULL,
+    action      TEXT    NOT NULL,
+    device      TEXT    NOT NULL,
+    room        TEXT    NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (command_id) REFERENCES command_log(id)
+);
