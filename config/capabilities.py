@@ -1,11 +1,13 @@
 from __future__ import annotations
-from functools import lru_cache
+
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from config.settings import DEVICE_CAPABILITIES_PATH
+
 CapabilitiesConfig = dict[str, Any]
 
 @dataclass(frozen=True)

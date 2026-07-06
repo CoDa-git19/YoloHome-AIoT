@@ -35,11 +35,25 @@ def load_language_aliases() -> dict[str, Any]:
 
 LANGUAGE_ALIASES = load_language_aliases()
 
-ACTION_ALIASES = LANGUAGE_ALIASES.get("actions") or {}
-ROOM_ALIASES = LANGUAGE_ALIASES.get("rooms") or {}
-DEVICE_ALIASES = LANGUAGE_ALIASES.get("devices") or {}
-DISPLAY_NAMES = LANGUAGE_ALIASES.get("display_names") or {}
-CONDITION_ALIASES = LANGUAGE_ALIASES.get("conditions") or {}
+
+def alias_section(name: str) -> dict[str, Any]:
+    """Return a safe alias section from language_aliases.json."""
+    value = LANGUAGE_ALIASES.get(name, {})
+
+    if value is None:
+        return {}
+
+    if not isinstance(value, dict):
+        raise ValueError(f"Alias section '{name}' must be an object.")
+
+    return value
+
+
+ACTION_ALIASES = alias_section("actions")
+ROOM_ALIASES = alias_section("rooms")
+DEVICE_ALIASES = alias_section("devices")
+DISPLAY_NAMES = alias_section("display_names")
+CONDITION_ALIASES = alias_section("conditions")
 
 def build_prompt(
     transcript: str,
@@ -131,7 +145,7 @@ def detect_room(
     supported_rooms = registry_rooms(device_registry)
 
     for room_key in supported_rooms:
-        aliases = ROOM_ALIASES.get(room_key, [room_key])
+        aliases = alias_list(ROOM_ALIASES, room_key, [room_key])
         if alias_matches(text, aliases):
             return room_key
 
@@ -152,7 +166,7 @@ def detect_device(
     supported_devices = registry_devices(device_registry)
 
     for device_key in supported_devices:
-        aliases = DEVICE_ALIASES.get(device_key, [device_key])
+        aliases = alias_list(DEVICE_ALIASES, device_key, [device_key])
         if alias_matches(text, aliases):
             return device_key
 
@@ -184,9 +198,13 @@ def mentions_device_like(text: str) -> bool:
     return False
 
 
-def alias_list(alias_group: dict[str, Any], key: str) -> list[str]:
+def alias_list(
+    alias_group: dict[str, Any],
+    key: str,
+    default: list[str] | None = None,
+) -> list[str]:
     """Return a safe alias list from config."""
-    value = alias_group.get(key, [])
+    value = alias_group.get(key, default or [])
 
     if value is None:
         return []

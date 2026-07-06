@@ -119,11 +119,17 @@ cp .env.example .env
 Hãy hỏi thành viên nhóm phụ trách từng module về các khóa bí mật. Tạo một tệp .env trong thư mục gốc và thêm chúng vào:
 
 ```bash
-GEMINI_API_KEY="khóa_api_của_bạn"
-ADAFRUIT_IO_USERNAME="tên_người_dùng_của_bạn"
-ADAFRUIT_IO_KEY="khóa_của_bạn"
-DATABASE_URL="sqlite:///database/smart_home.db"
+USE_MOCK_LLM=true
+GEMINI_API_KEY="your_api_key"
+GEMINI_MODEL="gemini-2.5-flash"
+
+ADAFRUIT_IO_USERNAME="your_username"
+ADAFRUIT_IO_KEY="your_key"
+
+DATABASE_URL="sqlite:///database/yolohome.db"
 FLASK_ENV="development"
+
+FACE_AUTH_THRESHOLD=0.80
 
 ```
 
