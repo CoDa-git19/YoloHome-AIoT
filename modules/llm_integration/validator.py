@@ -1,18 +1,30 @@
 from __future__ import annotations
-
+from config.capabilities import action_requires_face_auth, resolve_action_capability
 import json
 from pathlib import Path
 from typing import Any
-
-# Các hằng số bổ trợ cho việc validate cấu trúc condition
-VALID_SENSORS = {"temperature", "humidity", "light", "motion"}
-VALID_OPERATORS = {">", "<", ">=", "<=", "=="}
+from config.settings import COMMAND_SCHEMA_PATH
 
 
 def load_command_schema(schema_path: Path) -> dict[str, Any]:
     """Tải động file cấu hình command_schema.json."""
     with schema_path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_default_command_schema() -> dict[str, Any]:
+    """Load the default command schema from config/command_schema.json."""
+    return load_command_schema(COMMAND_SCHEMA_PATH)
+
+
+def get_valid_sensors(command_schema: dict[str, Any]) -> set[str]:
+    """Return valid automation sensor names from command schema config."""
+    return set(command_schema.get("valid_sensors", []))
+
+
+def get_valid_operators(command_schema: dict[str, Any]) -> set[str]:
+    """Return valid automation operators from command schema config."""
+    return set(command_schema.get("valid_operators", []))
 
 
 def normalize_command(command: dict[str, Any]) -> dict[str, Any]:
@@ -30,10 +42,20 @@ def normalize_command(command: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def validate_condition(condition: Any) -> dict[str, Any]:
+def validate_condition(
+    condition: Any,
+    command_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
-    Kiểm tra tính hợp lệ của cấu trúc điều kiện (condition) trong lệnh tự động hóa.
+    Validate an automation condition using command_schema.json.
+
+    The valid sensors and operators are config-driven:
+    - command_schema["valid_sensors"]
+    - command_schema["valid_operators"]
     """
+    if command_schema is None:
+        command_schema = load_default_command_schema()
+
     if not isinstance(condition, dict):
         return {
             "passed": False,
@@ -57,14 +79,17 @@ def validate_condition(condition: Any) -> dict[str, Any]:
             "message": "Condition value must not be null.",
         }
 
-    if condition["sensor"] not in VALID_SENSORS:
+    valid_sensors = get_valid_sensors(command_schema)
+    valid_operators = get_valid_operators(command_schema)
+
+    if condition["sensor"] not in valid_sensors:
         return {
             "passed": False,
             "code": "invalid_condition",
             "message": f"Unsupported sensor: {condition['sensor']}",
         }
 
-    if condition["operator"] not in VALID_OPERATORS:
+    if condition["operator"] not in valid_operators:
         return {
             "passed": False,
             "code": "invalid_condition",
@@ -138,7 +163,10 @@ def validate_command(
 
     # 4. Kiểm tra cấu trúc điều kiện nếu là lệnh tạo tự động hóa (create_rule)
     if intent == "create_rule":
-        condition_result = validate_condition(command.get("condition"))
+        condition_result = validate_condition(
+            command.get("condition"),
+            command_schema=command_schema,
+        )
         if not condition_result["passed"]:
             return condition_result
 
@@ -165,21 +193,54 @@ def validate_command(
             "message": f"Unsupported action: {action} for {room}.{device}",
         }
 
+    try:
+        resolve_action_capability(device=device, action=action)
+    except ValueError as exc:
+        return {
+            "passed": False,
+            "code": "unsupported_action",
+            "message": str(exc),
+        }
+
     # 6. Kiểm tra quy tắc an toàn động từ mảng sensitive_actions trong file JSON cấu hình
-    sensitive_actions = command_schema.get("sensitive_actions", [])
-    for rule in sensitive_actions:
-        if device == rule.get("device") and action == rule.get("action"):
-            if rule.get("face_auth") is True and command.get("face_auth") is not True:
-                return {
-                    "passed": False,
-                    "code": "safety_rule_violation",
-                    "message": f"The action '{action}' on device '{device}' requires face authentication.",
-                }
+    for sensitive_action in command_schema.get("sensitive_actions", []):
+        if (
+            sensitive_action.get("device") == device
+            and sensitive_action.get("action") == action
+            and sensitive_action.get("face_auth") is True
+            and command.get("face_auth") is not True
+        ):
+            return {
+                "passed": False,
+                "code": "safety_rule_violation",
+                "message": (
+                    f"The action '{action}' on device '{device}' requires "
+                    "face authentication."
+                ),
+            }
+
+    try:
+        requires_auth_by_capability = action_requires_face_auth(
+            device=device,
+            action=action,
+        )
+    except ValueError:
+        requires_auth_by_capability = False
+
+    if requires_auth_by_capability and command.get("face_auth") is not True:
+        return {
+            "passed": False,
+            "code": "safety_rule_violation",
+            "message": (
+                f"The action '{action}' on device '{device}' requires "
+                "face authentication by device capability policy."
+            ),
+        }
 
     return {
         "passed": True,
         "code": "valid",
-        "message": "Command schema and device are valid.",
+        "message": "Command is valid.",
     }
 
 

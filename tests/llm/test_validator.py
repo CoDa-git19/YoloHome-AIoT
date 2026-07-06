@@ -37,6 +37,19 @@ COMMAND_SCHEMA = {
             "face_auth": True,
         }
     ],
+    "valid_sensors": [
+        "temperature",
+        "humidity",
+        "light",
+        "motion",
+    ],
+    "valid_operators": [
+        ">",
+        "<",
+        ">=",
+        "<=",
+        "==",
+    ],
 }
 
 

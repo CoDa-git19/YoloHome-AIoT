@@ -4,41 +4,42 @@ Chào mừng bạn đến với dự án **YoloHome-AIoT**! Kho lưu trữ này 
 
 Vì nhóm của chúng mình gồm 5 thành viên làm việc trong các lĩnh vực hoàn toàn khác nhau (AI, Giao diện người dùng và Phần cứng), việc tuân thủ nghiêm ngặt quy trình làm việc này là **bắt buộc** để tránh xung đột tích hợp và lỗi biên dịch.
 
-## 🗂️ Project Structure
+## 🗂️ Cấu trúc dự án
 
 ```text
 .
-├── config/                 # System configurations and JSON schemas
-│   ├── command_schema.json
-│   ├── device_registry.json
-│   └── settings.py
-├── data/                   # Local data storage (.gitkeep)
-├── database/               # Database initialization and schemas
-│   ├── README_DB.md
-│   ├── init_db.py
-│   └── schema.sql
-├── docs/                   # Project documentation
-│   └── Project-Structure-Overview.md
-├── modules/                # Core system modules
-│   ├── face_recognition/   # Camera & Face ID processing
-│   ├── hardware_gateway/   # Yolo:Bit & MQTT communication
-│   ├── llm_integration/    # Gemini/LLM prompt and parsing
-│   └── speech_recognition/ # Speech-to-Text processing
-├── services/               # Business logic and cross-module services
-│   ├── auth_service.py
-│   ├── command_service.py
-│   ├── logging_service.py
-│   └── rule_service.py
-├── system_core/            # Main orchestration
-│   └── main.py
-├── tests/                  # Unit and integration tests
-│   ├── test_command_pipeline.py
-│   ├── test_llm_module.py
-│   └── test_validator.py
-└── web_dashboard/          # Flask web UI and HTML templates
-    ├── app.py
-    └── templates/          # UI views (agent_console, command_log, etc.)
+├── config/             # Cấu hình runtime, schema, alias và capability
+├── database/           # SQLite schema, script khởi tạo và tài liệu database
+├── diagrams/           # Sơ đồ kiến trúc và design pattern
+├── docs/               # Tài liệu dự án
+├── modules/            # Các module AIoT: LLM, face, speech, hardware gateway
+├── services/           # Service điều phối logic ứng dụng
+├── system_core/        # Core abstraction và implementation của design pattern
+├── tests/              # Unit test và integration test theo từng module
+├── web_dashboard/      # Flask dashboard UI
+├── .env.example        # File mẫu cho biến môi trường
+├── docker-compose.yml  # Cấu hình chạy container nếu cần
+├── README.md           # Tài liệu tiếng Anh
+└── README-vi.md        # Tài liệu tiếng Việt
 ```
+
+Các file cấu hình quan trọng:
+
+```text
+config/
+├── command_schema.json       # Schema command, intent, sensor, operator
+├── device_registry.json      # Phòng, thiết bị và action được hỗ trợ
+├── language_aliases.json     # Alias tiếng Việt cho mock parser
+├── device_capabilities.json  # Capability và safety policy cho command
+├── capabilities.py           # Resolver cho capability policy
+└── settings.py               # Đường dẫn runtime và biến môi trường
+```
+
+Các file runtime như `database/yolohome.db`, `__pycache__/`, `.pytest_cache/`,
+`.env` và `venv/` không nên commit lên GitHub.
+
+Tài liệu về LLM command pipeline, Strategy Pattern và Command Pattern nằm tại
+[`docs/LLM-Command-Strategy-Overview.md`](docs/LLM-Command-Strategy-Overview.md).
 
 ---
 
@@ -103,6 +104,18 @@ pip install -r requirements.txt
 
 ### 2.5 Thiết lập môi trường Biến:
 
+Sao chép file môi trường mẫu:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Hoặc trên macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
 Hãy hỏi thành viên nhóm phụ trách từng module về các khóa bí mật. Tạo một tệp .env trong thư mục gốc và thêm chúng vào:
 
 ```bash
@@ -113,6 +126,13 @@ DATABASE_URL="sqlite:///database/smart_home.db"
 FLASK_ENV="development"
 
 ```
+
+Khi phát triển offline hoặc chạy unit test, giữ `USE_MOCK_LLM=true`.
+Khi muốn gọi Gemini thật, đặt `USE_MOCK_LLM=false` và cấu hình `GEMINI_API_KEY`.
+
+Không commit file `.env` thật lên GitHub. Chỉ commit `.env.example`.
+
+---
 
 ### 2.6 Chạy ứng dụng:
 
@@ -135,25 +155,25 @@ python web_dashboard/app.py
 
 Để tránh xung đột khi hợp nhất, **chỉ làm việc trong thư mục module được chỉ định của bạn**:
 
-`modules/speech_recognition/`: Tích hợp PhoWhisper và VAD.
+`modules/llm_integration/`: Prompt Gemini, parse JSON, mock command parser và tích hợp validation.
 
-`modules/llm_integration/`: Nhắc API Gemini và phân tích cú pháp JSON.
+`modules/speech_recognition/`: Tích hợp Speech-to-Text.
 
-`modules/face_recognition/`: Nhúng dlib và xử lý khung hình OpenCV.
+`modules/face_recognition/`: Nhận diện khuôn mặt và xử lý camera.
 
-`modules/hardware_gateway/`: Giao tiếp nối tiếp Yolo:Bit và MQTT.
+`modules/hardware_gateway/`: Giao tiếp Yolo:Bit, Serial, MQTT hoặc IoT gateway.
 
-services/: Chứa logic mức ứng dụng như điều phối command, xác thực, ghi log và xử lý rule.
+`services/`: Các service mức ứng dụng như điều phối command, auth flow, logging và rule handling.
 
-`system_core/`: Tích hợp hệ thống và các mẫu thiết kế (Observer, Strategy).
+`system_core/`: Core abstraction và implementation của design pattern, gồm Command và Strategy.
 
-`web_dashboard/`: Ứng dụng Flask và giao diện người dùng.
+`config/`: Cấu hình runtime, schema, device registry, alias và capability policy.
 
-`database/`: Thiết kế SQLite schema, script khởi tạo database và tài liệu database.
+`database/`: SQLite schema, script khởi tạo và tài liệu database.
 
-`config/`: Cấu hình chung như device registry và command schema.
+`web_dashboard/`: Flask dashboard và template giao diện.
 
-`tests/`: Unit test và mock integration test.
+`tests/`: Unit test và integration test theo module hoặc theo phần kiến trúc.
 
 ---
 

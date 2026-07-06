@@ -60,7 +60,9 @@ Records every voice/text command processed by the pipeline.
 | `validation_status` | TEXT | | `passed` / `failed` |
 | `execution_status` | TEXT | | `pending`, `success`, `waiting_auth`, `clarify`, `rejected`, `failed`, `skipped` |
 | `result` | TEXT | NOT NULL | Final or intermediate pipeline result |
-| `latency_ms` | INTEGER | | LLM/pipeline latency in milliseconds |
+| `started_at` | TEXT | NOT NULL, default local now with milliseconds | Pipeline start time |
+| `completed_at` | TEXT | nullable | Pipeline completion time; NULL while pending/waiting_auth |
+| `latency_ms` | INTEGER | | End-to-end pipeline latency in milliseconds, finalized when command completes |
 | `error_message` | TEXT | | Populated only on failure when possible |
 
 Recommended `result` values:
@@ -113,6 +115,7 @@ Records every face-authentication event, optionally linked to a command.
 | `device` | TEXT | | Snapshot of target device |
 | `room` | TEXT | | Snapshot of target room |
 | `action_result` | TEXT | | `executed`, `cancelled`, `failed` |
+| `snapshot_path` | TEXT | | Optional path to captured face snapshot; NULL if not stored |
 
 Relationship:
 
@@ -121,6 +124,23 @@ command_log 1 ─── 0..* face_log
 ```
 
 A command can have zero or multiple face-auth attempts.
+
+---
+
+### `sensor_log`
+
+Records sensor readings received from hardware, MQTT, Adafruit IO, or mock sensor sources.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | INTEGER | PK, AUTOINCREMENT | Row identifier |
+| `timestamp` | TEXT | NOT NULL, default local now with milliseconds | Reading time |
+| `sensor` | TEXT | NOT NULL | Sensor name, e.g. `temperature`, `humidity`, `light`, `motion` |
+| `value` | REAL | | Numeric reading when available |
+| `unit` | TEXT | | Optional unit, e.g. `C`, `%`, `lux` |
+| `room` | TEXT | | Optional room/location |
+| `source` | TEXT | | Source module, e.g. `hardware`, `mqtt`, `adafruit`, `mock` |
+| `raw_json` | TEXT | | Original JSON payload for debugging |
 
 ---
 
@@ -202,8 +222,9 @@ dashboard
 ```text
 command_log ──< face_log
 command_log ──< automation_rules
-schedule        standalone
-error_log       standalone
+sensor_log     standalone time-series readings
+schedule       standalone
+error_log      standalone
 ```
 
 ---
@@ -255,6 +276,7 @@ log_face(
     device: str | None = None,
     room: str | None = None,
     action_result: str | None = None,
+    snapshot_path: str | None = None,
 ) -> None
 
 update_command_result(

@@ -11,6 +11,7 @@ from config.settings import (
     DEVICE_REGISTRY_PATH,
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    LANGUAGE_ALIASES_PATH,
     PROMPT_TEMPLATE_PATH,
     USE_MOCK_LLM,
 )
@@ -21,40 +22,24 @@ from modules.llm_integration.validator import (
     validation_code_to_log_result,
 )
 
-# Từ khóa cấu hình tĩnh cho Mock Parser để code gọn gàng, sạch sẽ hơn
-MOCK_ACTIONS = {
-    "status": ["trạng thái", "thế nào", "sao rồi", "đang"],
-    "open_keywords": ["bật", "mở"],
-    "close_keywords": ["tắt", "đóng", "khóa"],
-}
-
-ROOM_ALIASES = {
-    "living_room": ["phòng khách", "khách"],
-    "bedroom": ["phòng ngủ", "ngủ"],
-    "main_door": ["cửa chính", "cửa", "cổng"],
-    "kitchen": ["phòng bếp", "bếp"],
-    "office": ["phòng làm việc", "văn phòng"],
-    "bathroom": ["phòng tắm", "nhà tắm"],
-}
-
-DEVICE_ALIASES = {
-    "light": ["đèn", "bóng đèn"],
-    "fan": ["quạt"],
-    "door": ["cửa", "cửa chính", "cổng"],
-    "tv": ["tivi", "tv", "ti vi"],
-    "air_conditioner": ["máy lạnh", "điều hòa"],
-    "washing_machine": ["máy giặt"],
-    "pump": ["máy bơm", "bơm"],
-    "camera": ["camera", "cam"],
-    "speaker": ["loa"],
-    "curtain": ["rèm", "rèm cửa"],
-}
-
 def load_json(path: Path) -> dict[str, Any]:
     """Load a JSON file."""
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+
+def load_language_aliases() -> dict[str, Any]:
+    """Load Vietnamese aliases for mock command parsing."""
+    return load_json(LANGUAGE_ALIASES_PATH)
+
+
+LANGUAGE_ALIASES = load_language_aliases()
+
+MOCK_ACTIONS = LANGUAGE_ALIASES.get("actions", {})
+ROOM_ALIASES = LANGUAGE_ALIASES.get("rooms", {})
+DEVICE_ALIASES = LANGUAGE_ALIASES.get("devices", {})
+DISPLAY_NAMES = LANGUAGE_ALIASES.get("display_names", {})
+CONDITION_ALIASES = LANGUAGE_ALIASES.get("conditions", {})
 
 def build_prompt(
     transcript: str,
@@ -226,13 +211,18 @@ def detect_action(text: str, device: str | None) -> str | None:
 
 def detect_condition(text: str) -> dict[str, Any] | None:
     """
-    Detect simple automation conditions from Vietnamese text.
-
-    MVP support:
-    - nhiệt độ trên/lớn hơn/cao hơn/quá 30
-    - nhiệt độ dưới/nhỏ hơn/thấp hơn 30
+    Detect simple automation conditions from Vietnamese text using config aliases.
     """
-    if "nhiệt độ" not in text:
+    sensor_aliases = CONDITION_ALIASES.get("sensors", {})
+    operator_aliases = CONDITION_ALIASES.get("operators", {})
+
+    sensor: str | None = None
+    for sensor_key, aliases in sensor_aliases.items():
+        if alias_matches(text, aliases):
+            sensor = sensor_key
+            break
+
+    if sensor is None:
         return None
 
     number_match = re.search(r"\d+(?:\.\d+)?", text)
@@ -240,18 +230,16 @@ def detect_condition(text: str) -> dict[str, Any] | None:
         return None
 
     raw_value = number_match.group(0)
-    value: int | float
-    value = float(raw_value) if "." in raw_value else int(raw_value)
+    value: int | float = float(raw_value) if "." in raw_value else int(raw_value)
 
-    if any(keyword in text for keyword in ["trên", "lớn hơn", "cao hơn", "quá"]):
-        operator = ">"
-    elif any(keyword in text for keyword in ["dưới", "nhỏ hơn", "thấp hơn"]):
-        operator = "<"
-    else:
-        operator = ">"
+    operator = ">"
+    for operator_key, aliases in operator_aliases.items():
+        if alias_matches(text, aliases):
+            operator = operator_key
+            break
 
     return {
-        "sensor": "temperature",
+        "sensor": sensor,
         "operator": operator,
         "value": value,
     }
@@ -299,31 +287,11 @@ def make_reject_command(response: str) -> dict[str, Any]:
 
 
 def device_display_name(device: str | None) -> str:
-    mapping = {
-        "light": "đèn",
-        "fan": "quạt",
-        "door": "cửa chính",
-        "tv": "tivi",
-        "air_conditioner": "máy lạnh",
-        "washing_machine": "máy giặt",
-        "pump": "máy bơm",
-        "camera": "camera",
-        "speaker": "loa",
-        "curtain": "rèm cửa",
-    }
-    return mapping.get(device, "thiết bị")
+    return DISPLAY_NAMES.get("devices", {}).get(device, "thiết bị")
 
 
 def room_display_name(room: str | None) -> str:
-    mapping = {
-        "living_room": "phòng khách",
-        "bedroom": "phòng ngủ",
-        "main_door": "cửa chính",
-        "kitchen": "phòng bếp",
-        "office": "phòng làm việc",
-        "bathroom": "phòng tắm",
-    }
-    return mapping.get(room, "phòng")
+    return DISPLAY_NAMES.get("rooms", {}).get(room, "phòng")
 
 
 def supported_room_text(device_registry: dict[str, dict[str, list[str]]]) -> str:

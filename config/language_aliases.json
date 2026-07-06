@@ -1,0 +1,64 @@
+{
+    "actions": {
+      "status": ["trạng thái", "thế nào", "sao rồi", "đang"],
+      "open_keywords": ["bật", "mở"],
+      "close_keywords": ["tắt", "đóng", "khóa"]
+    },
+    "rooms": {
+      "living_room": ["phòng khách", "khách"],
+      "bedroom": ["phòng ngủ", "ngủ"],
+      "main_door": ["cửa chính", "cửa", "cổng"],
+      "kitchen": ["phòng bếp", "bếp"],
+      "office": ["phòng làm việc", "văn phòng"],
+      "bathroom": ["phòng tắm", "nhà tắm"]
+    },
+    "devices": {
+      "light": ["đèn", "bóng đèn"],
+      "fan": ["quạt"],
+      "door": ["cửa", "cửa chính", "cổng"],
+      "tv": ["tivi", "tv", "ti vi"],
+      "air_conditioner": ["máy lạnh", "điều hòa"],
+      "washing_machine": ["máy giặt"],
+      "pump": ["máy bơm", "bơm"],
+      "camera": ["camera", "cam"],
+      "speaker": ["loa"],
+      "curtain": ["rèm", "rèm cửa"]
+    },
+    "display_names": {
+      "rooms": {
+        "living_room": "phòng khách",
+        "bedroom": "phòng ngủ",
+        "main_door": "cửa chính",
+        "kitchen": "phòng bếp",
+        "office": "phòng làm việc",
+        "bathroom": "phòng tắm"
+      },
+      "devices": {
+        "light": "đèn",
+        "fan": "quạt",
+        "door": "cửa chính",
+        "tv": "tivi",
+        "air_conditioner": "máy lạnh",
+        "washing_machine": "máy giặt",
+        "pump": "máy bơm",
+        "camera": "camera",
+        "speaker": "loa",
+        "curtain": "rèm cửa"
+      }
+    },
+    "conditions": {
+      "sensors": {
+        "temperature": ["nhiệt độ"],
+        "humidity": ["độ ẩm"],
+        "light": ["ánh sáng", "độ sáng"],
+        "motion": ["chuyển động", "có người"]
+      },
+      "operators": {
+        ">": ["trên", "lớn hơn", "cao hơn", "quá"],
+        "<": ["dưới", "nhỏ hơn", "thấp hơn"],
+        ">=": ["từ", "ít nhất", "lớn hơn hoặc bằng", "cao hơn hoặc bằng"],
+        "<=": ["tối đa", "không quá", "nhỏ hơn hoặc bằng", "thấp hơn hoặc bằng"],
+        "==": ["bằng", "là"]
+      }
+    }
+  }
