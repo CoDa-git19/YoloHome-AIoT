@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from functools import lru_cache
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,9 +18,11 @@ class ActionCapability:
     risk_level: str
 
 
+@lru_cache(maxsize=4)
 def load_device_capabilities(
     path: Path = DEVICE_CAPABILITIES_PATH,
 ) -> CapabilitiesConfig:
+    """Load and cache device capability policy."""
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 

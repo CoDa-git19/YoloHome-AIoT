@@ -35,11 +35,11 @@ def load_language_aliases() -> dict[str, Any]:
 
 LANGUAGE_ALIASES = load_language_aliases()
 
-MOCK_ACTIONS = LANGUAGE_ALIASES.get("actions", {})
-ROOM_ALIASES = LANGUAGE_ALIASES.get("rooms", {})
-DEVICE_ALIASES = LANGUAGE_ALIASES.get("devices", {})
-DISPLAY_NAMES = LANGUAGE_ALIASES.get("display_names", {})
-CONDITION_ALIASES = LANGUAGE_ALIASES.get("conditions", {})
+ACTION_ALIASES = LANGUAGE_ALIASES.get("actions") or {}
+ROOM_ALIASES = LANGUAGE_ALIASES.get("rooms") or {}
+DEVICE_ALIASES = LANGUAGE_ALIASES.get("devices") or {}
+DISPLAY_NAMES = LANGUAGE_ALIASES.get("display_names") or {}
+CONDITION_ALIASES = LANGUAGE_ALIASES.get("conditions") or {}
 
 def build_prompt(
     transcript: str,
@@ -184,26 +184,42 @@ def mentions_device_like(text: str) -> bool:
     return False
 
 
+def alias_list(alias_group: dict[str, Any], key: str) -> list[str]:
+    """Return a safe alias list from config."""
+    value = alias_group.get(key, [])
+
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, list):
+        return [str(item) for item in value]
+
+    raise ValueError(f"Alias config for '{key}' must be a list or string.")
+
+
 def detect_action(text: str, device: str | None) -> str | None:
-    if contains_any(text, MOCK_ACTIONS["status"]):
+    if contains_any(text, alias_list(ACTION_ALIASES, "status")):
         return "get_status"
 
     if device is None:
         return None
 
     if device == "door":
-        if "mở" in text:
+        if contains_any(text, alias_list(ACTION_ALIASES, "open_keywords")):
             return "open"
 
-        if contains_any(text, MOCK_ACTIONS["close_keywords"]):
+        if contains_any(text, alias_list(ACTION_ALIASES, "close_keywords")):
             return "close"
 
         return None
 
-    if contains_any(text, MOCK_ACTIONS["open_keywords"]):
+    if contains_any(text, alias_list(ACTION_ALIASES, "open_keywords")):
         return "turn_on"
 
-    if contains_any(text, MOCK_ACTIONS["close_keywords"]):
+    if contains_any(text, alias_list(ACTION_ALIASES, "close_keywords")):
         return "turn_off"
 
     return None
