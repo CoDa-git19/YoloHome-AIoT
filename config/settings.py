@@ -24,6 +24,8 @@ MODELS_DIR = ROOT_DIR / "models"
 
 DEVICE_REGISTRY_PATH = CONFIG_DIR / "device_registry.json"
 COMMAND_SCHEMA_PATH = CONFIG_DIR / "command_schema.json"
+LANGUAGE_ALIASES_PATH = CONFIG_DIR / "language_aliases.json"
+DEVICE_CAPABILITIES_PATH = CONFIG_DIR / "device_capabilities.json"
 
 DB_PATH = DATABASE_DIR / "yolohome.db"
 SCHEMA_PATH = DATABASE_DIR / "schema.sql"

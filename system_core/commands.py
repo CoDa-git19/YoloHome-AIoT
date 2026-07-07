@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Protocol
-
+CommandPayload = dict[str, Any]
+from config.capabilities import is_special_command, resolve_action_capability
 
 class HardwareReceiver(Protocol):
     """
@@ -15,7 +16,7 @@ class HardwareReceiver(Protocol):
     MQTT gateway, or Adafruit IO gateway.
     """
 
-    def execute_command(self, command: dict[str, Any]) -> dict[str, Any] | bool:
+    def execute_command(self, command: CommandPayload) -> CommandPayload | bool:
         ...
 
 
@@ -57,7 +58,7 @@ class DeviceCommand(Command):
         self.hardware = hardware
         self.room = room
 
-    def _build_payload(self, action: str) -> dict[str, Any]:
+    def _build_payload(self, action: str) -> CommandPayload:
         return {
             "device": self.device,
             "action": action,
@@ -82,13 +83,35 @@ class DeviceCommand(Command):
 
         return self._send(self.undo_action)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> CommandPayload:
         return {
             "device": self.device,
             "action": self.action,
             "room": self.room,
             "undo_action": self.undo_action,
         }
+
+
+class GenericDeviceCommand(DeviceCommand):
+    """
+    Generic command for validated device actions.
+
+    Action behavior such as undo_action and safety level is resolved from
+    config/device_capabilities.json instead of being hardcoded in Python.
+    """
+
+    def __init__(
+        self,
+        hardware: HardwareReceiver,
+        device: str,
+        action: str,
+        room: str,
+        undo_action: str | None = None,
+    ) -> None:
+        self.device = device
+        self.action = action
+        self.undo_action = undo_action
+        super().__init__(hardware=hardware, room=room)
 
 
 class TurnOnLightCommand(DeviceCommand):
@@ -185,7 +208,7 @@ class GetStatusCommand(Command):
     def undo(self) -> bool:
         return False
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> CommandPayload:
         return {
             "device": self.device,
             "action": self.action,
@@ -194,19 +217,25 @@ class GetStatusCommand(Command):
         }
 
 
+SPECIAL_COMMANDS: dict[tuple[str, str], type[DeviceCommand]] = {
+    ("door", "open"): OpenDoorCommand,
+    ("door", "close"): CloseDoorCommand,
+}
+
+
 def create_device_command(
-    command_data: dict[str, Any],
+    command_data: CommandPayload,
     hardware: HardwareReceiver,
 ) -> Command:
     """
-    Mapping helper for mapping validated JSON command data to a concrete Command object.
-    This helper keeps CommandService cleaner.
-    Expected command_data:
-        {
-            "device": "light" | "fan" | "door",
-            "action": "turn_on" | "turn_off" | "open" | "close" | "get_status",
-            "room": "living_room" | "bedroom" | "main_door"
-        }
+    Convert validated JSON command data to a Command object.
+
+    Factory policy:
+    - get_status uses GetStatusCommand.
+    - special commands use dedicated command classes.
+    - generic actions are resolved from config/device_capabilities.json.
+
+    The factory assumes command_data has already passed Validator.
     """
     device = command_data.get("device")
     action = command_data.get("action")
@@ -222,22 +251,25 @@ def create_device_command(
             room=room,
         )
 
-    if device == "light" and action == "turn_on":
-        return TurnOnLightCommand(hardware, room)
+    special_command_cls = SPECIAL_COMMANDS.get((device, action))
+    if special_command_cls is not None:
+        return special_command_cls(hardware, room)
 
-    if device == "light" and action == "turn_off":
-        return TurnOffLightCommand(hardware, room)
+    if is_special_command(device=device, action=action):
+        raise ValueError(f"Special command not implemented: {device}.{action}")
 
-    if device == "fan" and action == "turn_on":
-        return TurnOnFanCommand(hardware, room)
+    capability = resolve_action_capability(device=device, action=action)
 
-    if device == "fan" and action == "turn_off":
-        return TurnOffFanCommand(hardware, room)
+    if not capability.generic:
+        raise ValueError(
+            f"Action is not generic: {device}.{action} "
+            f"for device_type={capability.device_type}"
+        )
 
-    if device == "door" and action == "open":
-        return OpenDoorCommand(hardware, room)
-
-    if device == "door" and action == "close":
-        return CloseDoorCommand(hardware, room)
-
-    raise ValueError(f"Unsupported command: {device}.{action} in {room}")
+    return GenericDeviceCommand(
+        hardware=hardware,
+        device=device,
+        action=action,
+        room=room,
+        undo_action=capability.undo_action,
+    )

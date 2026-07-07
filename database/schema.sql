@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS command_log (
     validation_status  TEXT,
     execution_status   TEXT,
     result             TEXT    NOT NULL,
+    started_at         TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')),
+    completed_at       TEXT,
     latency_ms         INTEGER,
     error_message      TEXT
 );
@@ -26,7 +28,19 @@ CREATE TABLE IF NOT EXISTS face_log (
     device        TEXT,
     room          TEXT,
     action_result TEXT,
+    snapshot_path TEXT,
     FOREIGN KEY (command_id) REFERENCES command_log(id)
+);
+
+CREATE TABLE IF NOT EXISTS sensor_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')),
+    sensor    TEXT    NOT NULL,
+    value     REAL,
+    unit      TEXT,
+    room      TEXT,
+    source    TEXT,
+    raw_json  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS schedule (
@@ -56,3 +70,15 @@ CREATE TABLE IF NOT EXISTS automation_rules (
     created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     FOREIGN KEY (command_id) REFERENCES command_log(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_command_log_timestamp
+ON command_log(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_command_log_execution_status
+ON command_log(execution_status);
+
+CREATE INDEX IF NOT EXISTS idx_face_log_command_id
+ON face_log(command_id);
+
+CREATE INDEX IF NOT EXISTS idx_sensor_log_sensor_timestamp
+ON sensor_log(sensor, timestamp);

@@ -8,7 +8,7 @@ from services.command_service import CommandService
 from system_core.commands import (
     CloseDoorCommand,
     GetStatusCommand,
-    TurnOnLightCommand,
+    GenericDeviceCommand,
 )
 
 
@@ -71,7 +71,7 @@ def setup_test_db(tmp_path, monkeypatch):
     yield
 
 
-def test_create_turn_on_light_command():
+def test_create_turn_on_light_uses_generic_command():
     service = CommandService(use_mock=True)
 
     command = service.create_command(
@@ -86,7 +86,13 @@ def test_create_turn_on_light_command():
         }
     )
 
-    assert isinstance(command, TurnOnLightCommand)
+    assert isinstance(command, GenericDeviceCommand)
+    assert command.to_dict() == {
+        "device": "light",
+        "action": "turn_on",
+        "room": "living_room",
+        "undo_action": "turn_off",
+    }
 
 
 def test_create_close_door_command():
@@ -136,7 +142,7 @@ def test_create_get_status_command():
     assert isinstance(command, GetStatusCommand)
 
 
-def test_execute_command_is_added_to_history():
+def test_execute_generic_command_is_added_to_history():
     service = CommandService(use_mock=True)
 
     result = service.handle_transcript("bật đèn phòng khách")
@@ -145,7 +151,13 @@ def test_execute_command_is_added_to_history():
     assert result["next_step"] == "execute"
     assert result["result"] == "success"
     assert len(service.command_history) == 1
-    assert isinstance(service.command_history[0], TurnOnLightCommand)
+    assert isinstance(service.command_history[0], GenericDeviceCommand)
+    assert service.command_history[0].to_dict() == {
+        "device": "light",
+        "action": "turn_on",
+        "room": "living_room",
+        "undo_action": "turn_off",
+    }
 
 
 def test_auth_required_command_is_not_executed_yet():
