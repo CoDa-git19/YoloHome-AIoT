@@ -1,7 +1,6 @@
-import os
 import time
 import threading
-from dotenv import load_dotenv
+from config import settings
 
 # --- IMPORT MODULES AND SERVICES ---
 
@@ -25,12 +24,11 @@ class MainOrchestrator:
     def __init__(self):
         print("[System] Initializing YoloHome-AIoT Gateway...")
         
-        load_dotenv()  # Load environment variables from .env file
-        
-        self.use_mock_llm = os.getenv("USE_MOCK_LLM", "true").lower() == "true"
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self.face_threshold = float(os.getenv("FACE_AUTH_THRESHOLD", "0.80"))
+        # Environment configuration is centralized in config.settings
+        self.use_mock_llm = settings.USE_MOCK_LLM
+        self.gemini_api_key = settings.GEMINI_API_KEY
+        self.gemini_model = settings.GEMINI_MODEL
+        self.face_threshold = settings.FACE_AUTH_THRESHOLD
         
         print(f"[Config] USE_MOCK_LLM = {self.use_mock_llm}")
         print(f"[Config] FACE_AUTH_THRESHOLD = {self.face_threshold}")
@@ -61,7 +59,8 @@ class MainOrchestrator:
         # --- ASSEMBLE OBSERVER PATTERN ---
         if self.hardware_module:
             self.hardware_module.attach(self.rule_service)
-            self.hardware_module.attach(self.logging_service)
+            if self.logging_service:
+                 self.hardware_module.attach(self.logging_service)
             
         self.latest_sensor_data = {}
             
@@ -85,8 +84,9 @@ class MainOrchestrator:
         
         # STT Phase
         print("[STT] Converting speech to text...")
-        transcript = self.stt_engine.transcribe(audio_data) if self.stt_engine else "open the main door"
-        print(f"   => Transcript: '{transcript}'")
+        if not self.stt_engine:
+            return "Speech-to-text is not configured. Cannot process voice command."
+        transcript = self.stt_engine.transcribe(audio_data)
         
         # LLM Phase
         print("[LLM] Analyzing intent with current sensor context...")
@@ -107,13 +107,25 @@ class MainOrchestrator:
             print("   => Error: Invalid command.")
             return "Sorry, I couldn't understand that command."
             
-        command_data = llm_result.get("command", {})
+        command_data = llm_result.get("command") or {}
+        next_step = llm_result.get("next_step", "stop")
+        if next_step == "create_rule":
+            rule_id = self.rule_service.create_rule(command_id=None, command=command_data)
+            return (
+                f"Automation rule created successfully (ID: {rule_id})."
+                if rule_id > 0
+                else "Sorry, I couldn't create that automation rule."
+            )
+        if next_step not in {"execute", "auth_required"}:
+            return command_data.get("response") or "Sorry, I couldn't understand that command."
         
         # FaceID Phase (Conditional)
         if command_data.get("face_auth", False):
             print("[FaceID] Security clearance required. Activating camera...")
-            face_result = self.face_module.verify_face() if self.face_module else {"authorized": True, "person_name": "Admin"}
-            
+            if not self.face_module:
+                            return "Access denied. Face verification is required but not configured."
+            face_result = self.face_module.verify_face()   
+         
             if not face_result.get("authorized"):
                 print("   => DENIED: Face not recognized!")
                 return "Access denied. Identity verification failed."
