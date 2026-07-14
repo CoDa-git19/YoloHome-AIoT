@@ -49,6 +49,7 @@ class LLMStrategy(ABC):
         self,
         transcript: str,
         sensor_data: dict[str, Any] | None = None,
+        pending_command: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Parse a text transcript into a validated command object.
@@ -56,6 +57,8 @@ class LLMStrategy(ABC):
         Args:
             transcript: User command text, usually from STT or text input.
             sensor_data: Optional current sensor values for context-aware commands.
+            pending_command: Command đang chờ làm rõ từ lượt trước, nếu người
+                dùng đang trả lời một câu hỏi làm rõ (multi-turn slot filling).
 
         Returns:
             A standard LLM result dictionary:

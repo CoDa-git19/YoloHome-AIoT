@@ -36,6 +36,7 @@ class FixedLLMStrategy(LLMStrategy):
         self,
         transcript: str,
         sensor_data: dict[str, Any] | None = None,
+        pending_command: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.calls.append(
             {

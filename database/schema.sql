@@ -58,18 +58,28 @@ CREATE TABLE IF NOT EXISTS error_log (
 );
 
 CREATE TABLE IF NOT EXISTS automation_rules (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    command_id  INTEGER,
-    sensor      TEXT    NOT NULL,
-    operator    TEXT    NOT NULL,
-    value       REAL    NOT NULL,
-    action      TEXT    NOT NULL,
-    device      TEXT    NOT NULL,
-    room        TEXT    NOT NULL,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_id        INTEGER,
+    sensor            TEXT    NOT NULL,
+    operator          TEXT    NOT NULL,
+    value             REAL    NOT NULL,
+    action            TEXT    NOT NULL,
+    device            TEXT    NOT NULL,
+    room              TEXT    NOT NULL,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    -- last_state: điều kiện có đang đúng ở lần đọc sensor TRƯỚC hay không.
+    -- Rule chỉ kích hoạt khi chuyển false -> true (edge-triggered),
+    -- nếu không sẽ spam lệnh xuống phần cứng mỗi vòng đọc sensor.
+    last_state        INTEGER NOT NULL DEFAULT 0,
+    last_triggered_at TEXT,
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     FOREIGN KEY (command_id) REFERENCES command_log(id)
 );
+
+-- Chặn rule trùng lặp: nói 2 lần cùng một câu không tạo ra 2 rule giống hệt.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_rules_unique
+ON automation_rules(sensor, operator, value, action, device, room)
+WHERE is_active = 1;
 
 CREATE INDEX IF NOT EXISTS idx_command_log_timestamp
 ON command_log(timestamp);
