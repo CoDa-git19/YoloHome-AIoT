@@ -2,7 +2,7 @@
 Smoke test: gọi Gemini THẬT và kiểm tra toàn bộ pipeline LLM.
 
 Chạy:
-    python smoke_gemini.py
+    python -m tools.smoke_gemini
 
 Mỗi câu tốn 1 request Gemini (nhiều hơn nếu bị 503 và phải retry),
 nên đừng chạy liên tục kẻo cháy quota free tier.

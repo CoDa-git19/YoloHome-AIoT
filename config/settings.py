@@ -148,7 +148,7 @@ GEMINI_API_KEY = env_str("GEMINI_API_KEY")
 # Alias tự hot-swap sang model mới mỗi lần Google release, khiến kết quả
 # benchmark trong báo cáo không tái lập được.
 #
-# Chạy `python probe_gemini.py` để xem key của bạn dùng được model nào.
+# Chạy `python -m tools.probe_gemini` để xem key của bạn dùng được model nào.
 GEMINI_MODEL = env_str("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 # Parse câu lệnh thành JSON là bài toán deterministic -> temperature = 0.

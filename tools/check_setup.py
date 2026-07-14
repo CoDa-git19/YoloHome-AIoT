@@ -2,7 +2,7 @@
 Kiểm tra toàn bộ cấu hình và database. KHÔNG gọi Gemini, KHÔNG tốn quota.
 
 Chạy:
-    python check_setup.py
+    python -m tools.check_setup
 
 Qua hết thì mới chạy smoke_gemini.py (tốn quota).
 """
@@ -191,8 +191,8 @@ if problems:
     for problem in problems:
         print(f"    - {problem}")
     print()
-    print("  Sửa xong rồi mới chạy smoke_gemini.py.")
+    print("  Sửa xong rồi mới chạy python -m tools.smoke_gemini")
     sys.exit(1)
 
-print("  Tất cả OK. Có thể chạy smoke_gemini.py (tốn khoảng 10 request).")
+print("  Tất cả OK. Chạy tiếp: python -m tools.smoke_gemini (~10 request).")
 print("=" * 74)

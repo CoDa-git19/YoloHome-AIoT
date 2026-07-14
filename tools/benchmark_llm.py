@@ -5,10 +5,10 @@ Benchmark các LLM strategy trên cùng một bộ dữ liệu.
 (prompt, schema, validator, policy, router), chỉ đổi strategy, đo được ngay.
 
 Chạy:
-    python benchmark_llm.py --models gemini-3.1-flash-lite
-    python benchmark_llm.py --models gemini-3.1-flash-lite,gemini-3-flash-preview
-    python benchmark_llm.py --models mock                    # offline, không tốn quota
-    python benchmark_llm.py --models openai:gpt-4o-mini      # cần OPENAI_API_KEY
+    python -m tools.benchmark_llm --models gemini-3.1-flash-lite
+    python -m tools.benchmark_llm --models gemini-3.1-flash-lite,gemini-3-flash-preview
+    python -m tools.benchmark_llm --models mock                    # offline, không tốn quota
+    python -m tools.benchmark_llm --models openai:gpt-4o-mini      # cần OPENAI_API_KEY
 
 Tuỳ chọn:
     --delay 1.0     nghỉ giữa các request (tránh 429)

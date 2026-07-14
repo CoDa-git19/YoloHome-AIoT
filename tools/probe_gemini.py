@@ -2,7 +2,7 @@
 Dò model Gemini khả dụng với API key hiện tại.
 
 Chạy:
-    python probe_gemini.py
+    python -m tools.probe_gemini
 
 Script sẽ:
 1. Liệt kê mọi model text khả dụng với key của bạn.
