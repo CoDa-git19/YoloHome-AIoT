@@ -284,7 +284,7 @@ def check_config() -> list[str]:
     if not ENV_PATH.exists():
         warnings.append(
             f"Không tìm thấy {ENV_PATH}. "
-            "Copy _env.example thành .env rồi điền GEMINI_API_KEY."
+            "Copy .env.example thành .env rồi điền GEMINI_API_KEY."
         )
 
     return warnings
