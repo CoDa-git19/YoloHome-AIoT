@@ -83,6 +83,7 @@ class FakeLLMStrategy(LLMStrategy):
         self,
         transcript: str,
         sensor_data: dict[str, Any] | None = None,
+        pending_command: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.called = True
         self.last_transcript = transcript
@@ -119,6 +120,7 @@ class FakeRejectLLMStrategy(LLMStrategy):
         self,
         transcript: str,
         sensor_data: dict[str, Any] | None = None,
+        pending_command: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": True,

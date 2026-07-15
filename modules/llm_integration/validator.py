@@ -3,6 +3,8 @@ from config.capabilities import action_requires_face_auth, resolve_action_capabi
 import json
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
+from functools import lru_cache
 from config.settings import COMMAND_SCHEMA_PATH
 
 
@@ -12,9 +14,25 @@ def load_command_schema(schema_path: Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def load_default_command_schema() -> dict[str, Any]:
-    """Load the default command schema from config/command_schema.json."""
+@lru_cache(maxsize=1)
+def _cached_default_command_schema() -> dict[str, Any]:
+    """
+    Cache nội bộ cho command_schema.json.
+
+    Không dùng trực tiếp: luôn đi qua load_default_command_schema()
+    để tránh trả về object dùng chung cho mọi caller.
+    """
     return load_command_schema(COMMAND_SCHEMA_PATH)
+
+
+def load_default_command_schema() -> dict[str, Any]:
+    """
+    Load the default command schema from config/command_schema.json.
+
+    Trả về bản sao để caller không vô tình mutate cache dùng chung.
+    Việc đọc đĩa vẫn được cache, chỉ deepcopy một dict nhỏ.
+    """
+    return deepcopy(_cached_default_command_schema())
 
 
 def get_valid_sensors(command_schema: dict[str, Any]) -> set[str]:
@@ -27,19 +45,127 @@ def get_valid_operators(command_schema: dict[str, Any]) -> set[str]:
     return set(command_schema.get("valid_operators", []))
 
 
-def normalize_command(command: dict[str, Any]) -> dict[str, Any]:
+def normalize_command(
+    command: dict[str, Any],
+    command_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
-    Chuẩn hóa kết quả đầu ra của LLM khớp với schema dự án.
+    Chuẩn hóa output của LLM khớp schema dự án.
+
+    Mọi required_field bị thiếu sẽ được điền None (thay vì để validator
+    báo missing_field), giúp pipeline có cơ hội chuyển sang clarify.
     """
+    if command_schema is None:
+        command_schema = load_default_command_schema()
+
     normalized = dict(command)
 
+    # Tương thích ngược: LLM đôi khi trả requires_auth thay vì face_auth
     if "face_auth" not in normalized and "requires_auth" in normalized:
         normalized["face_auth"] = bool(normalized.pop("requires_auth"))
 
-    normalized.setdefault("condition", None)
-    normalized.setdefault("response", "")
+    for field in command_schema.get("required_fields", []):
+        normalized.setdefault(field, None)
+
+    if normalized.get("face_auth") is None:
+        normalized["face_auth"] = False
+
+    if normalized.get("response") is None:
+        normalized["response"] = ""
 
     return normalized
+
+
+# =============================================================================
+# Server-side security policy enforcement
+#
+# Nguyên tắc: LLM là bộ HIỂU Ý ĐỊNH, không phải bộ RA QUYẾT ĐỊNH AN NINH.
+# Cờ face_auth do server quyết định dựa trên device_capabilities.json +
+# command_schema.sensitive_actions, KHÔNG tin giá trị LLM trả về.
+# =============================================================================
+
+POLICY_INTENTS = {"control_device", "query_status", "create_rule"}
+
+
+def requires_face_auth_by_policy(
+    device: str,
+    action: str,
+    command_schema: dict[str, Any] | None = None,
+) -> bool:
+    """
+    Nguồn sự thật duy nhất cho câu hỏi: hành động này có cần Face Auth không?
+
+    Kết hợp 2 nguồn config:
+    - command_schema["sensitive_actions"]
+    - device_capabilities.json (qua action_requires_face_auth)
+    """
+    if command_schema is None:
+        command_schema = load_default_command_schema()
+
+    for sensitive_action in command_schema.get("sensitive_actions", []):
+        if (
+            sensitive_action.get("device") == device
+            and sensitive_action.get("action") == action
+            and sensitive_action.get("face_auth") is True
+        ):
+            return True
+
+    try:
+        return action_requires_face_auth(device=device, action=action)
+    except ValueError:
+        return False
+
+
+def enforce_policy(
+    command: dict[str, Any],
+    command_schema: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """
+    Ghi đè face_auth theo policy phía server, bất kể LLM trả về gì.
+
+    Ghi đè theo CẢ HAI CHIỀU:
+    - Action cần auth nhưng LLM trả face_auth=false -> ép True.
+      (LLM quên, hoặc user cố prompt-injection để né xác thực.)
+    - Action không cần auth nhưng LLM trả face_auth=true -> ép False.
+      (Tránh LLM bắt xác thực khuôn mặt cho mọi lệnh vặt.)
+
+    Returns:
+        (command đã enforce, danh sách mô tả các lần ghi đè)
+    """
+    if command_schema is None:
+        command_schema = load_default_command_schema()
+
+    enforced = dict(command)
+    overrides: list[str] = []
+
+    intent = enforced.get("intent")
+    device = enforced.get("device")
+    action = enforced.get("action")
+
+    if intent not in POLICY_INTENTS or not device or not action:
+        return enforced, overrides
+
+    required = requires_face_auth_by_policy(
+        device=device,
+        action=action,
+        command_schema=command_schema,
+    )
+    claimed = enforced.get("face_auth") is True
+
+    if required and not claimed:
+        enforced["face_auth"] = True
+        overrides.append(
+            f"face_auth forced True for {device}.{action}: "
+            "policy requires face authentication, but the LLM returned face_auth=false."
+        )
+    elif not required and claimed:
+        enforced["face_auth"] = False
+        overrides.append(
+            f"face_auth forced False for {device}.{action}: "
+            "policy does not require face authentication."
+        )
+
+    return enforced, overrides
 
 
 def validate_condition(
@@ -120,7 +246,7 @@ def validate_command(
     """
     Hàm validate động dựa trên device_registry và command_schema.json.
     """
-    command = normalize_command(command)
+    command = normalize_command(command, command_schema=command_schema)
 
     # 1. Kiểm tra các trường bắt buộc từ file JSON cấu hình
     required_fields = set(command_schema.get("required_fields", []))
@@ -152,6 +278,15 @@ def validate_command(
     room = command.get("room")
     device = command.get("device")
     action = command.get("action")
+    
+    # router chuyển sang clarify, không phải lỗi hệ thống
+    if intent in {"control_device", "query_status", "create_rule"}:
+        if device is None or room is None or action is None:
+            return {
+                "passed": False,
+                "code": "missing_slot",
+                "message": "Command is missing device, room, or action.",
+            }
 
     # 3. Ràng buộc: query_status bắt buộc phải đi kèm action get_status
     if intent == "query_status" and action != "get_status":
@@ -163,6 +298,22 @@ def validate_command(
 
     # 4. Kiểm tra cấu trúc điều kiện nếu là lệnh tạo tự động hóa (create_rule)
     if intent == "create_rule":
+        # Không cho phép tạo automation rule cho hành động cần Face Auth:
+        # rule chạy tự động nên không có ai đứng trước camera để xác thực.
+        if requires_face_auth_by_policy(
+            device=device,
+            action=action,
+            command_schema=command_schema,
+        ):
+            return {
+                "passed": False,
+                "code": "safety_rule_violation",
+                "message": (
+                    f"Cannot create an automation rule for '{action}' on "
+                    f"device '{device}': the action requires face authentication."
+                ),
+            }
+
         condition_result = validate_condition(
             command.get("condition"),
             command_schema=command_schema,
@@ -252,7 +403,22 @@ def validation_code_to_log_result(code: str) -> str:
     if code in {"safety_rule_violation", "invalid_query_action", "invalid_condition"}:
         return "rejected: validation"
 
-    if code in {"missing_field", "invalid_intent"}:
+    if code in {"missing_field", "invalid_intent", "llm_parse_error"}:
         return "error: llm_parse"
+
+    if code == "llm_timeout":
+        return "error: llm_timeout"
+
+    if code == "llm_api_error":
+        return "error: llm_api"
+
+    if code == "llm_unavailable":
+        return "error: llm_unavailable"
+
+    if code == "llm_rate_limited":
+        return "error: llm_rate_limit"
+    
+    if code == "missing_slot":
+        return "clarify: missing_slot"
 
     return "fail: validation"
