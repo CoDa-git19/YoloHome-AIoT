@@ -316,6 +316,11 @@ decisions.** The server enforces `face_auth` from config, ignoring whatever the
 LLM returns. See
 [`docs/LLM-Command-Strategy-Overview.md`](docs/LLM-Command-Strategy-Overview.md).
 
+If you own the **STT** or **Face** module, the exact shapes to build to (the
+`transcribe()` output, the `auth_required` handoff, and the DB logging you must
+close out) are specified in
+[`docs/Integration-Contracts.md`](docs/Integration-Contracts.md).
+
 ---
 
 ## 🆘 8. Troubleshooting & Rules of Thumb
