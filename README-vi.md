@@ -74,6 +74,8 @@ Các file runtime như `database/yolohome.db`, `__pycache__/`, `.pytest_cache/`,
 Tài liệu về LLM command pipeline, Strategy Pattern và Command Pattern nằm tại
 [`docs/LLM-Command-Strategy-Overview.md`](docs/LLM-Command-Strategy-Overview.md).
 
+Nếu bạn phụ trách module **STT** hoặc **Face**, thì các "shape" chính xác cần xây dựng theo (đầu ra của `transcribe()`, phần bàn giao `auth_required`, và việc ghi log DB mà bạn phải hoàn tất) đều được đặc tả trong [`docs/Integration-Contracts.md`](docs/Integration-Contracts.md).
+
 ---
 
 ## 1. Điều kiện tiên quyết & Bộ công cụ
