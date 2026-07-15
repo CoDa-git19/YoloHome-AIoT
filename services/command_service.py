@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from typing import Any
 
+from modules.llm_integration.llm_module import (
+    device_display_name,
+    room_display_name,
+    state_display_name,
+)
 from modules.llm_integration.llm_strategy import GeminiLLMStrategy
 from services.logging_service import log_command, log_error, update_command_result
 from services.rule_service import RuleService
+from config.settings import COMMAND_HISTORY_SIZE
+from services.session_service import SessionService
+from system_core.contracts import (
+    check_status_result,
+    verify_hardware_receiver,
+    verify_llm_strategy,
+)
+from system_core.observers import Subject
 from system_core.commands import (
     Command,
     HardwareReceiver,
@@ -14,18 +28,83 @@ from system_core.commands import (
 from system_core.strategies import LLMStrategy
 
 
-class MockHardwareModule:
+# Trạng thái mà mỗi action đưa thiết bị về.
+# Dùng để mock phần cứng có "trí nhớ", nhờ đó get_status trả lời được thật.
+ACTION_TO_STATE: dict[str, str] = {
+    "turn_on": "on",
+    "turn_off": "off",
+    "open": "open",
+    "close": "closed",
+}
+
+# Trạng thái mặc định khi thiết bị chưa từng được điều khiển.
+DEFAULT_STATE_BY_DEVICE: dict[str, str] = {
+    "door": "closed",
+}
+DEFAULT_STATE = "off"
+
+
+class MockHardwareModule(Subject):
     """
     Temporary hardware receiver for MVP/testing.
 
-    Later this can be replaced by:
-    modules.hardware_gateway.hardware_module.HardwareModule
+    Là Subject nên có thể notify() dữ liệu cảm biến cho các Observer
+    (RuleObserver, dashboard...) mà không cần Yolo:Bit thật.
+
+    Có nhớ trạng thái thiết bị trong bộ nhớ, nên get_status trả về trạng thái
+    thật thay vì luôn báo "success" rỗng nghĩa.
+
+    HỢP ĐỒNG với phần cứng thật (modules/hardware_gateway/hardware_module.py):
+    - execute_command(action=get_status) PHẢI trả về {"status": ..., "state": ...}
+    - state là một trong: "on" | "off" | "open" | "closed"
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._states: dict[tuple[str, str], str] = {}
+        self.sensor_data: dict[str, Any] = {
+            "temperature": 28.5,
+            "humidity": 70.0,
+            "light": 512,
+            "motion": 0,
+        }
+
+    def read_sensors(self) -> dict[str, Any]:
+        return dict(self.sensor_data)
+
+    def poll_sensors(self) -> dict[str, Any]:
+        """Đọc cảm biến một lần rồi thông báo cho mọi observer."""
+        sensor_data = self.read_sensors()
+        self.notify(sensor_data)
+
+        return sensor_data
+
+    def _default_state(self, device: str) -> str:
+        return DEFAULT_STATE_BY_DEVICE.get(device, DEFAULT_STATE)
 
     def execute_command(self, command: dict[str, Any]) -> dict[str, Any]:
         print(f"[MockHardware] execute_command: {command}")
+
+        device = str(command.get("device", ""))
+        room = str(command.get("room", ""))
+        action = str(command.get("action", ""))
+        key = (room, device)
+
+        if action == "get_status":
+            state = self._states.get(key, self._default_state(device))
+            return {
+                "status": "success",
+                "state": state,
+                "command": command,
+            }
+
+        new_state = ACTION_TO_STATE.get(action)
+        if new_state is not None:
+            self._states[key] = new_state
+
         return {
             "status": "success",
+            "state": self._states.get(key, self._default_state(device)),
             "command": command,
         }
 
@@ -59,29 +138,49 @@ class CommandService:
         rule_service: RuleService | None = None,
         hardware_module: HardwareReceiver | None = None,
         llm_strategy: LLMStrategy | None = None,
-        use_mock: bool = True,
+        session_service: SessionService | None = None,
+        use_mock: bool | None = None,
     ) -> None:
         self.rule_service = rule_service or RuleService()
         self.hardware_module = hardware_module or MockHardwareModule()
 
+        # Multi-turn: nhớ câu hỏi làm rõ đang chờ trả lời.
+        self.session_service = session_service or SessionService()
+
+        # Hợp đồng phải được kiểm tra NGAY LÚC KHỞI ĐỘNG.
+        # Nếu team hardware viết lại module, hoặc ai đó thêm LLM strategy mới
+        # mà quên pending_command, ta muốn biết ngay - không phải giữa demo.
+        verify_hardware_receiver(self.hardware_module)
+
         # Strategy Pattern:
         # CommandService depends on LLMStrategy, not directly on llm_module.py.
         self.llm_strategy = llm_strategy or GeminiLLMStrategy(use_mock=use_mock)
+        verify_llm_strategy(self.llm_strategy)
 
         # Keep use_mock for backward compatibility with existing tests/call sites.
         self.use_mock = use_mock
 
         # Command Pattern:
-        # Store successfully executed commands for optional undo.
-        self.command_history: list[Command] = []
+        # Lưu các lệnh đã chạy thành công để có thể undo.
+        # deque có maxlen: chạy 24/7 thì list thường sẽ phình vô hạn.
+        self.command_history: deque[Command] = deque(maxlen=COMMAND_HISTORY_SIZE)
 
     def handle_transcript(
         self,
         transcript: str,
         sensor_data: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Handle a full command pipeline from transcript to system decision.
+
+        session_id cho phép hội thoại nhiều lượt:
+            User : bật đèn
+            Bot  : Bạn muốn điều khiển đèn ở phòng nào?
+            User : phòng khách          <- cùng session_id
+            Bot  : Đã bật đèn phòng khách.
+
+        Bỏ trống session_id -> mỗi câu là một lệnh độc lập (hành vi cũ).
 
         Returns:
             {
@@ -91,26 +190,43 @@ class CommandService:
                 "response": str,
                 "execution_status": str,
                 "result": str,
-                "command": dict | None
+                "command": dict | None,
+                "session_id": str | None,
+                "awaiting_reply": bool
             }
         """
         start_time = time.time()
 
+        pending_command = self.session_service.get_pending(session_id)
+
         llm_result = self.llm_strategy.parse_and_validate(
             transcript=transcript,
             sensor_data=sensor_data,
+            pending_command=pending_command,
         )
 
-        latency_ms = int((time.time() - start_time) * 1000)
+        # Tách 2 con số: latency của riêng LLM và của cả pipeline.
+        # llm_latency_ms là metric để so sánh model (P3 benchmark);
+        # total_latency_ms là thứ người dùng thực sự cảm nhận.
+        total_latency_ms = int((time.time() - start_time) * 1000)
+        llm_latency_ms = int(llm_result.get("latency_ms") or 0)
 
         command = llm_result.get("command") or {}
         next_step = llm_result.get("next_step", "stop")
+
+        # Policy ghi đè quyết định của LLM -> ghi error_log để audit.
+        # Đây có thể là dấu hiệu prompt injection hoặc model lỗi.
+        for override in llm_result.get("policy_overrides") or []:
+            log_error(
+                "security_policy",
+                f"Policy override on transcript={transcript!r}: {override}",
+            )
 
         validation_status = "passed" if llm_result.get("ok") else "failed"
         execution_status = "pending"
         result_status = "pending"
         error_message = llm_result.get("error")
-        response_text = command.get("response", "Đang xử lý yêu cầu của bạn.")
+        response_text = command.get("response") or "Đang xử lý yêu cầu của bạn."
 
         command_id = self._create_initial_log(
             transcript=transcript,
@@ -118,16 +234,24 @@ class CommandService:
             result_status=result_status,
             validation_status=validation_status,
             execution_status=execution_status,
-            latency_ms=latency_ms,
+            latency_ms=total_latency_ms,
             error_message=error_message,
         )
 
         if next_step == "execute":
-            success = self._execute_hardware_action(command)
+            success, executed_command = self._run_command(command)
 
             if success:
                 result_status = "success"
                 execution_status = "success"
+
+                # get_status phải trả về TRẠNG THÁI THẬT, không phải
+                # "Đang kiểm tra trạng thái thiết bị." rồi im lặng.
+                if command.get("action") == "get_status":
+                    response_text = self._build_status_response(
+                        command_data=command,
+                        command=executed_command,
+                    )
             else:
                 result_status = "fail: hardware_error"
                 execution_status = "failed"
@@ -156,8 +280,28 @@ class CommandService:
                 error_message = response_text
 
         elif next_step == "clarify":
-            result_status = "success"
+            # Phân biệt 2 loại clarify:
+            # - "success"              : user nói mơ hồ -> bot hỏi lại (hành vi đúng).
+            # - "clarify: missing_slot": LLM trả thiếu slot -> đây là lỗi của model,
+            #                            dùng làm metric chất lượng LLM trên dashboard.
+            result_status = llm_result.get("log_result") or "success"
             execution_status = "clarify"
+
+            if self.session_service.has_reached_turn_limit(session_id):
+                # Hỏi mãi mà không tiến triển -> dừng, đừng lùa user vào
+                # vòng lặp clarify vô tận.
+                self.session_service.clear(session_id)
+                next_step = "stop"
+                execution_status = "failed"
+                result_status = "fail: clarify_limit"
+                response_text = (
+                    "Mình vẫn chưa hiểu rõ yêu cầu. "
+                    "Bạn thử nói lại đầy đủ hơn nhé, ví dụ: "
+                    '"bật đèn phòng khách".'
+                )
+                error_message = "Clarify turn limit reached."
+            else:
+                self.session_service.set_pending(session_id, command)
 
         elif next_step == "reject":
             result_status = llm_result.get("log_result") or "rejected: unknown_device"
@@ -166,15 +310,18 @@ class CommandService:
         elif next_step == "registry_request":
             result_status = "waiting_admin_review"
             execution_status = "registry_request"
-            response_text = command.get(
-                "response",
-                "Yêu cầu đăng ký phòng hoặc thiết bị mới đang chờ quản trị viên xem xét.",
+            response_text = command.get("response") or (
+                "Yêu cầu đăng ký phòng hoặc thiết bị mới đang chờ quản trị viên xem xét."
             )
 
         else:
             result_status = llm_result.get("log_result") or "fail: validation"
             execution_status = "failed"
             error_message = error_message or response_text
+
+        # Lệnh đã xong (hoặc bị chặn) -> hội thoại kết thúc, xoá phiên.
+        if next_step != "clarify":
+            self.session_service.clear(session_id)
 
         final_error = error_message if execution_status == "failed" else None
 
@@ -188,20 +335,25 @@ class CommandService:
 
         return {
             "command_id": command_id,
-            "ok": bool(
-                llm_result.get("ok")
-                and execution_status in {
-                    "success",
-                    "waiting_auth",
-                    "clarify",
-                    "registry_request",
-                }
-            ),
+            # ok phản ánh việc hệ thống xử lý thành công, không phải việc
+            # validation có passed hay không. clarify/registry_request là kết quả
+            # hợp lệ, dù validation.passed=False (ví dụ code=missing_slot).
+            "ok": execution_status in {
+                "success",
+                "waiting_auth",
+                "clarify",
+                "registry_request",
+            },
             "next_step": next_step,
             "response": response_text,
             "execution_status": execution_status,
             "result": result_status,
             "command": command,
+            "llm_latency_ms": llm_latency_ms,
+            "total_latency_ms": total_latency_ms,
+            "session_id": session_id,
+            # True -> UI nên chờ user trả lời câu hỏi làm rõ.
+            "awaiting_reply": next_step == "clarify",
         }
 
     def create_command(self, command_data: dict[str, Any]) -> Command:
@@ -290,7 +442,10 @@ class CommandService:
         """
         return getattr(command, "undo_action", None) is not None
     
-    def _execute_hardware_action(self, command_data: dict[str, Any]) -> bool:
+    def _run_command(
+        self,
+        command_data: dict[str, Any],
+    ) -> tuple[bool, Command | None]:
         """
         Execute hardware action through Command Pattern.
 
@@ -299,16 +454,56 @@ class CommandService:
             -> create concrete Command object
             -> command.execute()
             -> hardware receiver executes actual payload
+
+        Trả về cả Command object để caller đọc được command.last_result,
+        nhờ đó get_status không bị mất trạng thái thiết bị.
         """
         try:
             command = self.create_command(command_data)
             success = command.execute()
 
+            # Phần cứng có tuân thủ hợp đồng get_status không?
+            # Thiếu "state" -> hỏng âm thầm, nên phải log lỗi.
+            check_status_result(
+                hardware_name=type(self.hardware_module).__name__,
+                command=command_data,
+                result=command.last_result,
+            )
+
             if success and self._is_undoable(command):
                 self.command_history.append(command)
 
-            return success
+            return success, command
 
         except Exception as exc:
             log_error("command_service", f"Hardware command execution failed: {exc}")
-            return False
+            return False, None
+
+    def _execute_hardware_action(self, command_data: dict[str, Any]) -> bool:
+        """Execute hardware action and return only success/failure."""
+        success, _ = self._run_command(command_data)
+        return success
+
+    def _build_status_response(
+        self,
+        command_data: dict[str, Any],
+        command: Command | None,
+    ) -> str:
+        """
+        Dựng câu trả lời tiếng Việt cho lệnh get_status, từ trạng thái THẬT
+        mà phần cứng trả về.
+
+        Ví dụ: "Quạt ở phòng ngủ đang bật."
+        """
+        state = getattr(command, "state", None) if command is not None else None
+
+        device_text = device_display_name(command_data.get("device"))
+        room_text = room_display_name(command_data.get("room"))
+        state_text = state_display_name(state)
+
+        # Tránh câu ngớ ngẩn kiểu "Cửa chính ở cửa chính đang đóng."
+        # (device "door" và room "main_door" cùng hiển thị là "cửa chính")
+        if device_text == room_text:
+            return f"{device_text.capitalize()} {state_text}."
+
+        return f"{device_text.capitalize()} ở {room_text} {state_text}."

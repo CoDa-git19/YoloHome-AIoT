@@ -27,7 +27,13 @@ class Command(ABC):
     Each concrete command encapsulates one device action.
     CommandService only calls execute()/undo(), without knowing
     the low-level hardware payload details.
+
+    execute() trả bool để invoker biết thành công hay không.
+    Payload đầy đủ mà receiver trả về được giữ trong last_result, nhờ đó
+    lệnh get_status không bị mất trạng thái thiết bị.
     """
+
+    last_result: CommandPayload | None = None
 
     @abstractmethod
     def execute(self) -> bool:
@@ -70,8 +76,10 @@ class DeviceCommand(Command):
         result = self.hardware.execute_command(payload)
 
         if isinstance(result, dict):
+            self.last_result = result
             return result.get("status") == "success"
 
+        self.last_result = {"status": "success" if result else "error"}
         return bool(result)
 
     def execute(self) -> bool:
@@ -201,12 +209,27 @@ class GetStatusCommand(Command):
         result = self.hardware.execute_command(payload)
 
         if isinstance(result, dict):
+            self.last_result = result
             return result.get("status") == "success"
 
+        self.last_result = {"status": "success" if result else "error"}
         return bool(result)
 
     def undo(self) -> bool:
         return False
+
+    @property
+    def state(self) -> str | None:
+        """
+        Trạng thái thiết bị mà phần cứng trả về ("on", "off", "open", "closed"...).
+
+        None nếu phần cứng chưa báo trạng thái.
+        """
+        if not isinstance(self.last_result, dict):
+            return None
+
+        state = self.last_result.get("state")
+        return str(state) if state is not None else None
 
     def to_dict(self) -> CommandPayload:
         return {
@@ -217,10 +240,68 @@ class GetStatusCommand(Command):
         }
 
 
-SPECIAL_COMMANDS: dict[tuple[str, str], type[DeviceCommand]] = {
-    ("door", "open"): OpenDoorCommand,
-    ("door", "close"): CloseDoorCommand,
-}
+# =============================================================================
+# Special command registry
+#
+# config/device_capabilities.json khai báo hành động nào là "special" (cần một
+# class Command riêng thay vì GenericDeviceCommand). Registry này ánh xạ khai
+# báo đó sang class thật.
+#
+# validate_special_commands() bắt lỗi ngay lúc import nếu config khai báo một
+# special command mà chưa có class - thay vì nổ giữa lúc demo.
+# =============================================================================
+
+SPECIAL_COMMANDS: dict[tuple[str, str], type[DeviceCommand]] = {}
+
+
+def register_special_command(device: str, action: str):
+    """Decorator đăng ký class Command cho một special command."""
+
+    def decorator(command_cls: type[DeviceCommand]) -> type[DeviceCommand]:
+        SPECIAL_COMMANDS[(device, action)] = command_cls
+        return command_cls
+
+    return decorator
+
+
+register_special_command("door", "open")(OpenDoorCommand)
+register_special_command("door", "close")(CloseDoorCommand)
+
+
+def validate_special_commands(
+    capabilities: CommandPayload | None = None,
+) -> list[str]:
+    """
+    Đối chiếu config với registry.
+
+    Trả về danh sách special command được khai báo trong
+    device_capabilities.json nhưng CHƯA có class tương ứng.
+    """
+    from config.capabilities import load_device_capabilities
+
+    if capabilities is None:
+        capabilities = load_device_capabilities()
+
+    missing: list[str] = []
+
+    for item in capabilities.get("special_commands", []):
+        device = item.get("device")
+        action = item.get("action")
+
+        if (device, action) not in SPECIAL_COMMANDS:
+            missing.append(f"{device}.{action}")
+
+    return missing
+
+
+_missing_special_commands = validate_special_commands()
+
+if _missing_special_commands:
+    raise RuntimeError(
+        "config/device_capabilities.json khai báo special command nhưng "
+        f"chưa có class Command tương ứng: {_missing_special_commands}. "
+        "Thêm class rồi đăng ký bằng @register_special_command."
+    )
 
 
 def create_device_command(

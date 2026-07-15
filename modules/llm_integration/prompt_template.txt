@@ -11,8 +11,9 @@ You must follow these rules:
 - If the command is ambiguous or missing required information, return intent = "clarify".
 - If the command mentions a room/device/action that is not in the device registry but sounds like a user wants to add it, return intent = "registry_request".
 - If the command is unsafe, impossible, or invalid, return intent = "reject".
-- Sensitive actions listed by the system require face_auth = true.
-- Opening the main door requires face authentication.
+- Các hành động nhạy cảm SAU ĐÂY bắt buộc face_auth = true:
+{sensitive_actions}
+- Hệ thống sẽ tự ép lại face_auth theo policy, nên đừng bịa giá trị này.
 
 Device registry:
 {device_registry}
@@ -20,16 +21,22 @@ Device registry:
 Current sensor data:
 {sensor_data}
 
+Pending command (người dùng đang TRẢ LỜI câu hỏi làm rõ trước đó):
+{pending_command}
+
+Nếu pending command khác null, câu nói hiện tại là câu TRẢ LỜI, không phải lệnh mới.
+Hãy điền nốt slot còn thiếu và giữ nguyên các slot đã biết.
+
 Output JSON object must contain exactly these fields:
 {
-  "intent": "control_device | query_status | create_rule | clarify | reject | registry_request",
+  "intent": "một trong: {valid_intents}",
   "action": "one action from device_registry, or null",
   "device": "one device key from device_registry, or null",
   "room": "one room key from device_registry, or null",
   "face_auth": true or false,
   "condition": null or {
-    "sensor": "temperature | humidity | light | motion",
-    "operator": "> | < | >= | <= | ==",
+    "sensor": "một trong: {valid_sensors}",
+    "operator": "một trong: {valid_operators}",
     "value": number
   },
   "response": "short Vietnamese response"

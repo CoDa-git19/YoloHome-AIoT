@@ -20,7 +20,11 @@ ctranslate2==4.1.0
 soundfile==0.12.1
 
 # --- LLM Integration ---
-google-genai
+# QUAN TRỌNG: pin đúng version đang chạy được trên máy bạn.
+# Chạy: pip freeze | grep google-genai   rồi thay số bên dưới.
+# Không pin -> mỗi người cài một version khác nhau, và API của SDK này
+# thay đổi khá nhanh (response_schema, thinking_config...).
+google-genai==2.11.0
 
 # --- Testing ---
 pytest
