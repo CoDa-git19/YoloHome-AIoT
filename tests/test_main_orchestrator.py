@@ -16,7 +16,13 @@ class FakeSTTEngine:
 
 class FakeLLMEngine:
     def __init__(self, result_to_return: Dict[str, Any]):
-        self.result = result_to_return
+        self.result = dict(result_to_return)
+        if "next_step" not in self.result:
+            command = self.result.get("command") or {}
+            if not self.result.get("ok"):
+                self.result["next_step"] = "stop"
+            else:
+                self.result["next_step"] = "auth_required" if command.get("face_auth") else "execute"
 
     def parse_and_validate(self, *args, **kwargs) -> Dict[str, Any]:
         return self.result

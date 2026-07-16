@@ -7,21 +7,14 @@ from config.settings import DB_PATH, SCHEMA_PATH
 def init_db() -> None:
     """Initialize the SQLite database using database/schema.sql.
 
-    If an existing database file is present with an incompatible schema,
-    remove it so the schema can be recreated cleanly. Tests expect a
-    deterministic fresh database when they call this helper.
+    The schema is idempotent, so normal startup should preserve existing
+    data. Tests can request a clean reset explicitly via YOLOHOME_RESET_DB.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Remove old DB if present to avoid 'no such column' when the schema
-    # was bumped but the file persisted from earlier runs.
-    if DB_PATH.exists():
-        try:
-            os.remove(DB_PATH)
-        except Exception:
-            # If removal fails for any reason, allow SQLite to surface a
-            # clearer error when attempting to apply the schema.
-            pass
+    reset_db = os.getenv("YOLOHOME_RESET_DB", "").strip().lower() in {"1", "true", "yes"}
+    if reset_db and DB_PATH.exists():
+        DB_PATH.unlink()
 
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 

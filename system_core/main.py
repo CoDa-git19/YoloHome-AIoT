@@ -100,7 +100,9 @@ class MainOrchestrator:
         
         if not llm_result.get("ok"):
             print("   => Error: Invalid command.")
-            return "Sorry, I couldn't understand that command."
+            validation_message = (llm_result.get("validation") or {}).get("message")
+            response = (llm_result.get("command") or {}).get("response")
+            return response or validation_message or "Sorry, I couldn't understand that command."
             
         command_data = llm_result.get("command") or {}
         next_step = llm_result.get("next_step", "stop")
@@ -118,9 +120,9 @@ class MainOrchestrator:
         if command_data.get("face_auth", False):
             print("[FaceID] Security clearance required. Activating camera...")
             if not self.face_module:
-                            return "Access denied. Face verification is required but not configured."
-            face_result = self.face_module.verify_face()   
-         
+                return "Access denied. Face verification is required but not configured."
+            face_result = self.face_module.verify_face()
+
             if not face_result.get("authorized"):
                 print("   => DENIED: Face not recognized!")
                 return "Access denied. Identity verification failed."
@@ -136,7 +138,7 @@ class MainOrchestrator:
             print(f"   => [Mock] Sending command to hardware/Adafruit: {command_data}")
             
         print("="*50)
-        return "Command executed successfully!"
+        return command_data.get("response") or "Command executed successfully!"
 
 if __name__ == "__main__":
     orchestrator = MainOrchestrator()
