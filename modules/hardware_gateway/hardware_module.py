@@ -1,7 +1,6 @@
 from config.settings import ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY
 from services.logging_service import log_error
 from system_core.observers import Subject
-from Adafruit_IO import Client
 
 class HardwareModule(Subject):
     def __init__(self, serial_port: str = ""):
@@ -93,6 +92,8 @@ class HardwareModule(Subject):
 
     def publish_to_adafruit(self, data: dict) -> None:
         try:
+            from Adafruit_IO import Client
+
             aio = Client(ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY)
             for key, value in data.items():
                 feed_key = f"home-{key}"

@@ -4,8 +4,7 @@ from config import settings
 
 # --- IMPORT MODULES AND SERVICES ---
 
-# Import Concrete Modules
-# from modules.hardware_gateway.hardware_module import HardwareModule
+from modules.hardware_gateway.hardware_module import HardwareModule
 # from modules.speech_recognition.stt_module import STTModule
 # from modules.face_recognition.face_module import FaceModule
 
@@ -15,6 +14,7 @@ from modules.llm_integration.llm_strategy import GeminiLLMStrategy, MockLLMStrat
 from services.command_service import CommandService
 from services.rule_service import RuleService
 # from services.logging_service import LoggingService
+from system_core.observers import RuleObserver
 
 ######################################
 # MAIN ORCHESTRATOR (SYSTEM GATEWAY)
@@ -35,7 +35,7 @@ class MainOrchestrator:
         
         # --- INITIALIZE MAIN MODULES ---
         # Hardware & STT
-        self.hardware_module = None # HardwareModule(username=os.getenv("ADAFRUIT_IO_USERNAME"), key=os.getenv("ADAFRUIT_IO_KEY"))
+        self.hardware_module = HardwareModule()
         self.stt_engine = None      # STTModule(model_weights="base")
         
         if self.use_mock_llm:
@@ -57,10 +57,9 @@ class MainOrchestrator:
         )
         
         # --- ASSEMBLE OBSERVER PATTERN ---
-        if self.hardware_module:
-            self.hardware_module.attach(self.rule_service)
-            if self.logging_service:
-                 self.hardware_module.attach(self.logging_service)
+        self.hardware_module.attach(RuleObserver(self.rule_service, self.command_service))
+        if self.logging_service:
+            self.hardware_module.attach(self.logging_service)
             
         self.latest_sensor_data = {}
             
@@ -70,12 +69,8 @@ class MainOrchestrator:
         """Continuously read sensor data"""
         print("[System] Starting background sensor monitoring thread...")
         while True:
-            if self.hardware_module:
-                self.latest_sensor_data = self.hardware_module.read_sensors()
-            else:
-                self.latest_sensor_data = {"temperature": 26.5, "humidity": 55.0}
-                
-            time.sleep(5)
+            self.latest_sensor_data = self.hardware_module.poll_sensors()
+            time.sleep(2)
 
     def process_voice_command(self, audio_data: bytes) -> str:
         """Main Pipeline: End-to-end voice processing"""
