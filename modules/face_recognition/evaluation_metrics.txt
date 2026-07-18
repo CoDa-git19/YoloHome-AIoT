@@ -1,0 +1,31 @@
+Huấn luyện xong trong 26.48 giây.
+Bộ tham số tối ưu nhất tìm được: {'C': 2, 'gamma': 3}
+KẾT QUẢ ĐÁNH GIÁ (TEST SET):
+Accuracy : 98.33%
+Precision: 98.48%
+Recall   : 98.33%
+F1-score : 98.35%
+
+ĐÁNH GIÁ FAR / FRR:
+False Accept Rate (FAR): 0.00%
+False Reject Rate (FRR): 2.00%
+
+Chi tiết (Classification Report):
+                      precision    recall  f1-score   support
+
+        Huynh_Cam_ly       1.00      0.95      0.97        20
+Huynh_Viet_Cong_Danh       1.00      1.00      1.00        20
+     Le_Nhu_Nha_Uyen       1.00      0.95      0.97        20
+   Nguyen_Dinh_Khang       1.00      1.00      1.00        20
+   Nguyen_Thanh_Binh       1.00      1.00      1.00        20
+             Unknown       0.91      1.00      0.95        20
+
+            accuracy                           0.98       120
+           macro avg       0.98      0.98      0.98       120
+        weighted avg       0.98      0.98      0.98       120
+Confusion Matrix:[[19  0  0  0  0  1]
+ [ 0 20  0  0  0  0]
+ [ 0  0 19  0  0  1]
+ [ 0  0  0 20  0  0]
+ [ 0  0  0  0 20  0]
+ [ 0  0  0  0  0 20]]
