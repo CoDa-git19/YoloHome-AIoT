@@ -46,13 +46,14 @@ class MainOrchestrator:
             self.llm_engine = GeminiLLMStrategy(use_mock=False)
             
         self.face_module = None     # FaceModule(threshold=self.face_threshold)
-        
+
         # --- INITIALIZE SERVICES ---
         self.logging_service = None # LoggingService(db_url=os.getenv("DATABASE_URL"))
         self.rule_service = RuleService()
         self.command_service = CommandService(
             rule_service=self.rule_service,
             hardware_module=self.hardware_module,
+            llm_strategy=self.llm_engine,  # Dùng chung 1 LLMStrategy, tránh khởi tạo Gemini client 2 lần
             use_mock=self.use_mock_llm,
         )
         
@@ -69,35 +70,41 @@ class MainOrchestrator:
         """Continuously read sensor data"""
         print("[System] Starting background sensor monitoring thread...")
         while True:
-            self.latest_sensor_data = self.hardware_module.poll_sensors()
+            try:
+                self.latest_sensor_data = self.hardware_module.poll_sensors()
+            except Exception as exc:
+                print(f"[System] Sensor loop error: {exc}")
             time.sleep(2)
 
     def process_voice_command(self, audio_data: bytes) -> str:
-        """Main Pipeline: End-to-end voice processing"""
+        """Main Pipeline: audio -> STT -> shared transcript pipeline."""
         print("\n" + "="*50)
         print("[Pipeline] Processing new voice command...")
-        
+
         # STT Phase
         print("[STT] Converting speech to text...")
         if not self.stt_engine:
             return "Speech-to-text is not configured. Cannot process voice command."
         transcript = self.stt_engine.transcribe(audio_data)
-        
+
+        return self._process_transcript(transcript)
+
+    def process_text_command(self, transcript: str) -> str:
+        """
+        Tạm thời dùng khi STT chưa sẵn sàng: bỏ qua bước (b), nhận thẳng
+        transcript văn bản rồi chạy chung pipeline (c)-(g) với process_voice_command.
+        """
+        print("\n" + "="*50)
+        print("[Pipeline] Processing new text command...")
+
+        return self._process_transcript(transcript)
+
+    def _process_transcript(self, transcript: str) -> str:
+        """Steps (c)-(g): check face_auth -> Face ID -> LLM -> execute."""
         # LLM Phase
         print("[LLM] Analyzing intent with current sensor context...")
-        if self.llm_engine:
-            llm_result = self.llm_engine.parse_and_validate(transcript, self.latest_sensor_data)
-        else:
-            llm_result = {
-                "ok": True,
-                "command": {
-                    "action": "open",
-                    "device": "door",
-                    "room": "main_door",
-                    "face_auth": True,
-                },
-            }
-        
+        llm_result = self.llm_engine.parse_and_validate(transcript, self.latest_sensor_data)
+
         if not llm_result.get("ok"):
             print("   => Error: Invalid command.")
             validation_message = (llm_result.get("validation") or {}).get("message")
@@ -132,11 +139,8 @@ class MainOrchestrator:
 
         # Execute Phase
         print("[Execute] Creating and executing IoT Command...")
-        if self.command_service:
-            self.command_service.execute_authorized_command(command_data)
-        else:
-            print(f"   => [Mock] Sending command to hardware/Adafruit: {command_data}")
-            
+        self.command_service.execute_authorized_command(command_data)
+
         print("="*50)
         return command_data.get("response") or "Command executed successfully!"
 
@@ -148,11 +152,13 @@ if __name__ == "__main__":
 
     time.sleep(1)
     print("\n--- TEMPORARY CONSOLE CHAT INTERFACE ---")
+    print("(STT chưa sẵn sàng: gõ trực tiếp câu lệnh bằng văn bản, hệ thống sẽ đi thẳng vào LLM)")
     while True:
-        user_input = input("Press Enter to simulate voice input (or type 'exit' to quit): ")
+        user_input = input("Nhập lệnh (hoặc 'exit' để thoát): ")
         if user_input.lower() == 'exit':
             break
+        if not user_input.strip():
+            continue
 
-        dummy_audio_bytes = b"dummy_audio_data"
-        response = orchestrator.process_voice_command(dummy_audio_bytes)
+        response = orchestrator.process_text_command(user_input)
         print(f"[Bot Reply]: {response}")
