@@ -3,7 +3,8 @@ Test cho MainOrchestrator (system_core/main.py).
 
 NGUYÊN TẮC
 ----------
-1. Chạy HOÀN TOÀN OFFLINE: không gọi API Gemini, không ghi DB thật.
+1. Chạy HOÀN TOÀN OFFLINE: không gọi API Gemini, không ghi DB thật,
+   không cần webcam.
 
 2. Kiểm tra HÀNH VI, không chỉ chuỗi trả về. Một test chỉ assert nội dung
    câu trả lời sẽ vẫn xanh ngay cả khi orchestrator bỏ qua face auth và mở
@@ -42,22 +43,49 @@ class FakeSTTEngine:
         return self.transcript
 
 
+class FakeCamera:
+    """
+    Camera giả, trả về một frame khác None.
+
+    Cần thiết vì orchestrator chặn frame=None (fail closed). Không có camera
+    giả thì mọi test face auth đều rơi vào nhánh từ chối.
+    """
+
+    def __init__(self, ok: bool = True) -> None:
+        self.ok = ok
+        self.calls = 0
+
+    def read(self):
+        self.calls += 1
+        return self.ok, ("fake-frame" if self.ok else None)
+
+
 class FakeFaceModule:
+    """
+    Giả lập FaceRecognizer theo Contract B.
+
+    CHỈ trả person_name + confidence. KHÔNG trả cờ authorized - quyết định
+    ngưỡng là thẩm quyền của server (FACE_AUTH_THRESHOLD), không phải của
+    face module.
+    """
+
     def __init__(
         self,
         authorized: bool,
         person_name: str | None = "Admin",
         confidence: float = 0.95,
     ) -> None:
-        self.authorized = authorized
-        self.person_name = person_name
-        self.confidence = confidence
+        # authorized giữ lại cho tiện đọc test, nhưng KHÔNG trả về cho
+        # orchestrator. Nó chỉ quyết định confidence cao hay thấp.
+        self.person_name = person_name if authorized else None
+        self.confidence = confidence if authorized else 0.3
         self.calls = 0
+        self.frames_seen: list[Any] = []
 
-    def verify_face(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def recognize(self, frame: Any = None) -> dict[str, Any]:
         self.calls += 1
+        self.frames_seen.append(frame)
         return {
-            "authorized": self.authorized,
             "person_name": self.person_name,
             "confidence": self.confidence,
         }
@@ -190,6 +218,9 @@ def orchestrator(tmp_path, monkeypatch):
        RuleService._ensure_schema() gọi init_db() ghi thẳng vào
        database/yolohome.db thật. Mỗi module import DB_PATH riêng nên phải
        patch từng chỗ.
+
+    Camera giả được gắn sẵn để các test face auth đi vào đường "bình thường".
+    Test nào muốn kiểm tra tình huống mất camera thì tự gán camera = None.
     """
     monkeypatch.setattr(settings, "USE_MOCK_LLM", True)
 
@@ -200,6 +231,7 @@ def orchestrator(tmp_path, monkeypatch):
 
     orch = MainOrchestrator()
     orch.latest_sensor_data = {"temperature": 25.0}
+    orch.camera = FakeCamera()
 
     yield orch
 
@@ -277,6 +309,7 @@ def test_normal_command_never_touches_face_auth(orchestrator):
     response = orchestrator.process_text_command("bật đèn phòng khách")
 
     assert face.calls == 0, "Bật camera cho một lệnh không nhạy cảm."
+    assert orchestrator.camera.calls == 0, "Chụp ảnh cho một lệnh vô hại."
     assert cmd.execute_calls == 0, "Thực thi 2 lần - lệnh sẽ chạy nhân đôi."
     assert "đã bật đèn" in response.lower()
 
@@ -299,6 +332,50 @@ def test_face_auth_success_executes_command(orchestrator):
     assert cmd.executed_commands[0]["device"] == "door"
     assert cmd.executed_commands[0]["action"] == "open"
     assert isinstance(response, str) and response
+
+
+def test_orchestrator_supplies_the_frame(orchestrator):
+    """
+    Contract B: orchestrator chụp frame, face module CHỈ nhận diện.
+
+    Nếu face module tự mở camera thì sẽ có 2 chỗ tranh nhau webcam.
+    """
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True)
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+
+    orchestrator.process_text_command("mở cửa chính")
+
+    assert orchestrator.camera.calls == 1, "Orchestrator không hề chụp ảnh."
+    assert face.frames_seen == ["fake-frame"], (
+        "Frame không được truyền xuống face module."
+    )
+
+
+def test_confidence_below_threshold_is_denied(orchestrator):
+    """
+    Ngưỡng là quyết định của SERVER, không phải của face module.
+
+    Nhận ra người quen nhưng confidence thấp hơn FACE_AUTH_THRESHOLD thì
+    vẫn phải từ chối.
+    """
+    cmd = auth_required_service()
+    face = FakeFaceModule(
+        authorized=True,
+        person_name="Danh",
+        confidence=orchestrator.face_threshold - 0.01,
+    )
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+
+    response = orchestrator.process_text_command("mở cửa chính")
+
+    assert face.calls == 1
+    assert cmd.execute_calls == 0, (
+        "NGHIÊM TRỌNG: mở cửa dù confidence dưới ngưỡng."
+    )
+    assert "từ chối" in response.lower() or "denied" in response.lower()
 
 
 def test_hardware_failure_after_auth_is_reported(orchestrator):
@@ -329,7 +406,7 @@ def test_face_auth_denied_blocks_hardware(orchestrator):
     vẫn có thể làm test xanh.
     """
     cmd = auth_required_service()
-    face = FakeFaceModule(authorized=False, person_name=None, confidence=0.3)
+    face = FakeFaceModule(authorized=False)
     orchestrator.command_service = cmd
     orchestrator.face_module = face
 
@@ -339,6 +416,42 @@ def test_face_auth_denied_blocks_hardware(orchestrator):
     assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: cửa mở dù xác thực thất bại."
     assert cmd.executed_commands == []
     assert "từ chối" in response.lower() or "denied" in response.lower()
+
+
+def test_no_camera_blocks_hardware(orchestrator):
+    """
+    Chưa có camera -> TỪ CHỐI, và không được gọi tới face module.
+
+    MockFaceRecognizer BỎ QUA tham số frame và luôn trả một danh tính hợp
+    lệ, kể cả khi frame=None. Nếu orchestrator không tự chặn frame=None thì
+    cửa sẽ mở dù không hề có camera nào cắm vào máy.
+    """
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True)
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+    orchestrator.camera = None
+
+    response = orchestrator.process_text_command("mở cửa chính")
+
+    assert face.calls == 0, "Gọi nhận diện dù không có frame."
+    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa dù không có camera."
+    assert isinstance(response, str) and response
+
+
+def test_camera_read_failure_blocks_hardware(orchestrator):
+    """Camera có mặt nhưng đọc lỗi (che ống kính, USB lỏng) -> từ chối."""
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True)
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+    orchestrator.camera = FakeCamera(ok=False)
+
+    response = orchestrator.process_text_command("mở cửa chính")
+
+    assert face.calls == 0
+    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi đọc camera lỗi."
+    assert isinstance(response, str) and response
 
 
 def test_missing_face_module_blocks_hardware(orchestrator):
@@ -360,15 +473,15 @@ def test_missing_face_module_blocks_hardware(orchestrator):
 
 
 def test_face_module_crash_blocks_hardware(orchestrator):
-    """Camera lỗi / ném exception -> không sập hệ thống, và không mở cửa."""
+    """Model nhận diện ném exception -> không sập hệ thống, và không mở cửa."""
 
     class CrashingFaceModule:
         def __init__(self) -> None:
             self.calls = 0
 
-        def verify_face(self, *args: Any, **kwargs: Any):
+        def recognize(self, frame: Any = None):
             self.calls += 1
-            raise RuntimeError("camera disconnected")
+            raise RuntimeError("model not loaded")
 
     cmd = auth_required_service()
     face = CrashingFaceModule()
@@ -378,7 +491,7 @@ def test_face_module_crash_blocks_hardware(orchestrator):
     response = orchestrator.process_text_command("mở cửa chính")
 
     assert face.calls == 1
-    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi camera lỗi."
+    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi nhận diện lỗi."
     assert isinstance(response, str) and response
 
 
@@ -396,9 +509,11 @@ def test_auth_service_takes_priority_over_face_module(orchestrator):
     class FakeAuthService:
         def __init__(self) -> None:
             self.calls = 0
+            self.frames_seen: list[Any] = []
 
-        def authorize_and_execute(self, result, *args: Any, **kwargs: Any):
+        def authorize_and_execute(self, result, frame=None, *a: Any, **kw: Any):
             self.calls += 1
+            self.frames_seen.append(frame)
             return {"authorized": True, "response": "Đã mở cửa chính."}
 
     cmd = auth_required_service()
@@ -412,6 +527,7 @@ def test_auth_service_takes_priority_over_face_module(orchestrator):
     response = orchestrator.process_text_command("mở cửa chính")
 
     assert auth.calls == 1
+    assert auth.frames_seen == ["fake-frame"], "Không truyền frame cho AuthService."
     assert face.calls == 0, "Gọi face_module dù đã có AuthService."
     assert cmd.execute_calls == 0, "Thực thi 2 lần."
     assert "đã mở cửa" in response.lower()
@@ -421,7 +537,7 @@ def test_auth_service_crash_blocks_hardware(orchestrator):
     """AuthService lỗi -> fail closed, không rơi ngược về đường tạm thời."""
 
     class CrashingAuthService:
-        def authorize_and_execute(self, result, *args: Any, **kwargs: Any):
+        def authorize_and_execute(self, result, frame=None, *a: Any, **kw: Any):
             raise RuntimeError("auth backend down")
 
     cmd = auth_required_service()
@@ -432,6 +548,7 @@ def test_auth_service_crash_blocks_hardware(orchestrator):
 
     response = orchestrator.process_text_command("mở cửa chính")
 
+    assert face.calls == 0, "Rơi về fallback khi AuthService lỗi."
     assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi AuthService lỗi."
     assert isinstance(response, str) and response
 

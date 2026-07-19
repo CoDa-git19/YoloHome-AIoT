@@ -280,10 +280,24 @@ class MainOrchestrator:
             )
             return "Từ chối truy cập: hệ thống xác thực khuôn mặt chưa sẵn sàng."
 
+        frame = self.capture_frame()
+        if frame is None:
+            print("   => DENIED: chưa lấy được frame từ camera.")
+            self._close_auth_log(
+                command_id,
+                command=command,
+                status="no_face",
+                executed=False,
+                person_name=None,
+                confidence=0.0,
+            )
+            return "Từ chối truy cập: không lấy được hình ảnh từ camera."
+
         try:
-            face_result = self.face_module.verify_face() or {}
+            # Contract B: orchestrator chụp frame, face module chỉ nhận diện.
+            face_result = self.face_module.recognize(frame) or {}
         except Exception as exc:
-            log_error("face", f"verify_face failed: {exc}")
+            log_error("face", f"recognize failed: {exc}")
             self._close_auth_log(
                 command_id,
                 command=command,
