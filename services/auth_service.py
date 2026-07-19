@@ -297,21 +297,25 @@ class AuthService:
                         break
 
                 # ── Đếm frame nhất quán ───────────────────────────────────
-                if result.get("authorized"):
-                    person = result["person_name"]
-                    if person == last_person:
-                        consistent_count += 1
-                    else:
-                        consistent_count = 1
-                        last_person = person
-                        if liveness_detector:
-                            liveness_detector.reset()
-
+                # Luôn ghi nhận kết quả cuối cùng nếu có khuôn mặt (để log chính xác người lạ)
+                if result.get("face_found"):
                     last_result = {
                         "person_name": result["person_name"],
                         "confidence":  result["confidence"],
                         "authorized":  result["authorized"],
                     }
+
+                if result.get("authorized"):
+                    person = result["person_name"]
+                    if person == last_person:
+                        consistent_count += 1
+                    else:
+                        if last_person is not None and liveness_detector:
+                            # Chỉ reset chớp mắt nếu đổi TỪ người A SANG người B
+                            liveness_detector.reset()
+                        
+                        consistent_count = 1
+                        last_person = person
 
                     if consistent_count >= self.required_frames:
                         logger.info(
@@ -331,8 +335,8 @@ class AuthService:
             if self.display:
                 _cv2.destroyWindow(self.window_title)
 
-        logger.warning("Auth: timeout sau %.1fs. Tra ve unauthorized.", self.timeout_seconds)
-        return {"person_name": "Unknown", "confidence": 0.0, "authorized": False}
+        logger.warning("Auth: timeout sau %.1fs. Tra ve ket qua cuoi cung thay vi mac dinh.", self.timeout_seconds)
+        return last_result
 
 
     def _execute_command(self, command_data: dict[str, Any]) -> bool:
