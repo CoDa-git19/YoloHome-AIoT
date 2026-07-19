@@ -86,7 +86,7 @@ def _require_dlib() -> Any:
 # Chỉ số mắt (từ dlib 68-point model):
 #   Mắt phải: landmark 36-41
 #   Mắt trái:  landmark 42-47
-_EAR_BLINK_THRESHOLD = 0.22   # EAR dưới giá trị này → đang nhắm mắt
+_EAR_BLINK_THRESHOLD = 0.25   # EAR dưới giá trị này → đang nhắm mắt
 _EAR_CONSEC_FRAMES   = 2       # Số frame liên tiếp EAR < threshold → 1 lần chớp
 
 # Đường dẫn shape predictor (68-landmark model của dlib)
@@ -396,6 +396,7 @@ class FaceRecognizer:
 
         # Bước 3: SVM phân loại
         try:
+            print("SVM")
             probabilities = self._classifier.predict_proba(encoding)[0]
             class_idx = int(np.argmax(probabilities))
             confidence = float(probabilities[class_idx])
@@ -467,7 +468,6 @@ class FaceRecognizer:
             return {**self._no_face_result(), "face_found": True, "ear": None}
 
         encoding = face_encodings[0].reshape(1, -1)
-
         # ── SVM phân loại ─────────────────────────────────────────────
         try:
             probs = self._classifier.predict_proba(encoding)[0]
