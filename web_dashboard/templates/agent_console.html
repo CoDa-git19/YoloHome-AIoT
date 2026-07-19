@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col lg:flex-row gap-4 pb-4 items-start">
+    <!-- Cột trái: Metrics, Pipeline, Interactive area -->
+    <div class="w-full lg:w-1/2 flex flex-col gap-4">
+
+        <!-- 2.1 Top Metrics Bar -->
+        <div class="grid grid-cols-4 gap-3">
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-thermometer-half text-blue-500 text-lg mb-1"></i>
+                <span id="tm-temp" class="text-sm font-bold text-slate-800 dark:text-white">-- °C</span>
+                <span class="text-[10px] text-slate-400">Temperature</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-tint text-sky-500 text-lg mb-1"></i>
+                <span id="tm-humidity" class="text-sm font-bold text-slate-800 dark:text-white">-- %</span>
+                <span class="text-[10px] text-slate-400">Humidity</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-sun text-amber-500 text-lg mb-1"></i>
+                <span id="tm-light" class="text-sm font-bold text-slate-800 dark:text-white">--</span>
+                <span class="text-[10px] text-slate-400">Light Level</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-person-walking text-violet-500 text-lg mb-1"></i>
+                <span id="tm-motion" class="text-sm font-bold text-slate-800 dark:text-white">--</span>
+                <span class="text-[10px] text-slate-400">Motion</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="far fa-lightbulb text-amber-400 text-lg mb-1"></i>
+                <span id="tm-light-state" class="text-sm font-bold text-slate-800 dark:text-white">--</span>
+                <span class="text-[10px] text-slate-400">Light (Living Room)</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-fan text-sky-400 text-lg mb-1"></i>
+                <span id="tm-fan-state" class="text-sm font-bold text-slate-800 dark:text-white">--</span>
+                <span class="text-[10px] text-slate-400">Fan</span>
+            </div>
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                <i class="fas fa-door-closed text-slate-400 text-lg mb-1"></i>
+                <span id="tm-door-state" class="text-sm font-bold text-slate-800 dark:text-white">--</span>
+                <span class="text-[10px] text-slate-400">Door</span>
+            </div>
+        </div>
+
+        <!-- 2.2 Agent Pipeline Tracker -->
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold mb-4 text-slate-800 dark:text-white text-sm">Agent Pipeline</h3>
+            <div class="flex justify-between items-center text-[10px] font-medium text-slate-400" id="pipeline-tracker">
+                <div class="flex flex-col items-center gap-1.5" data-step="stt">
+                    <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">1</div>
+                    <span class="text-slate-500 dark:text-slate-400">STT / Input</span>
+                    <span class="step-label font-semibold text-slate-400">WAIT</span>
+                </div>
+                <i class="fas fa-arrow-right text-slate-300 dark:text-slate-700"></i>
+                <div class="flex flex-col items-center gap-1.5" data-step="llm">
+                    <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">2</div>
+                    <span class="text-slate-500 dark:text-slate-400">LLM</span>
+                    <span class="step-label font-semibold text-slate-400">WAIT</span>
+                </div>
+                <i class="fas fa-arrow-right text-slate-300 dark:text-slate-700"></i>
+                <div class="flex flex-col items-center gap-1.5" data-step="validation">
+                    <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">3</div>
+                    <span class="text-slate-500 dark:text-slate-400">Validation</span>
+                    <span class="step-label font-semibold text-slate-400">WAIT</span>
+                </div>
+                <i class="fas fa-arrow-right text-slate-300 dark:text-slate-700"></i>
+                <div class="flex flex-col items-center gap-1.5" data-step="face_auth">
+                    <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">4</div>
+                    <span class="text-slate-500 dark:text-slate-400">Face Auth</span>
+                    <span class="step-label font-semibold text-slate-400">WAIT</span>
+                </div>
+                <i class="fas fa-arrow-right text-slate-300 dark:text-slate-700"></i>
+                <div class="flex flex-col items-center gap-1.5" data-step="execution">
+                    <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">5</div>
+                    <span class="text-slate-500 dark:text-slate-400">Execution</span>
+                    <span class="step-label font-semibold text-slate-400">WAIT</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input + LLM JSON -->
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col gap-3">
+            <h3 class="font-semibold text-slate-800 dark:text-white text-sm">1. User Input (Voice or Text)</h3>
+            <div class="flex gap-2">
+                <input type="text" id="command-input" placeholder="Nhập lệnh (VD: mở cửa chính)..."
+                       class="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white text-sm rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 block p-2.5 outline-none transition">
+                <button id="send-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-lg transition disabled:opacity-60">
+                    <i class="fas fa-paper-plane mr-1"></i> Send
+                </button>
+            </div>
+            <div class="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                <span>Last STT Result: <span id="stt-result" class="text-slate-700 dark:text-slate-200 font-medium">--</span> <span class="text-slate-400">(Source: Text Input Fallback)</span></span>
+                <span>Confidence: <span id="stt-confidence" class="text-slate-700 dark:text-slate-200 font-medium">--</span></span>
+            </div>
+
+            <h3 class="font-semibold text-slate-800 dark:text-white text-sm mt-2">2. LLM JSON Output</h3>
+            <div class="code-block rounded-lg p-3 text-emerald-400 text-[11px] overflow-x-auto relative">
+                <button id="copy-json" class="absolute top-2 right-2 text-slate-500 hover:text-white transition" title="Copy">
+                    <i class="far fa-copy"></i>
+                </button>
+                <pre id="json-output">Waiting for command...</pre>
+            </div>
+
+            <!-- 3,4,5 Result Cards -->
+            <div class="grid grid-cols-3 gap-3 mt-1">
+                <div class="border border-slate-200 dark:border-slate-800 rounded-lg p-3">
+                    <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">3. Validation</p>
+                    <p id="validation-status" class="text-sm font-bold text-slate-400">--</p>
+                    <p id="validation-detail" class="text-[10px] text-slate-400 mt-1">Chưa có lệnh nào.</p>
+                </div>
+                <div class="border border-slate-200 dark:border-slate-800 rounded-lg p-3">
+                    <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">4. Face Auth</p>
+                    <p id="face-status" class="text-sm font-bold text-slate-400">--</p>
+                    <p id="face-detail" class="text-[10px] text-slate-400 mt-1">Không yêu cầu.</p>
+                </div>
+                <div class="border border-slate-200 dark:border-slate-800 rounded-lg p-3">
+                    <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">5. Execution</p>
+                    <p id="execution-status" class="text-sm font-bold text-slate-400">--</p>
+                    <p id="execution-detail" class="text-[10px] text-slate-400 mt-1">Chưa thực thi.</p>
+                </div>
+            </div>
+
+            <div class="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-lg p-3 mt-1">
+                <h4 class="text-blue-600 dark:text-blue-400 text-xs font-semibold mb-1"><i class="fas fa-robot mr-1"></i> System Response</h4>
+                <p id="bot-response" class="text-sm text-slate-700 dark:text-slate-200">Hệ thống đã sẵn sàng lắng nghe.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cột phải: Mini Logs -->
+    <div class="w-full lg:w-1/2 flex flex-col gap-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="font-semibold text-slate-800 dark:text-white text-sm">Mini Command Log</h3>
+                <button onclick="fetchMiniCommandLogs()" class="text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sync-alt mr-1 text-blue-500"></i> Refresh
+                </button>
+            </div>
+            <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse">
+                    <thead class="text-[10px] text-slate-400 uppercase">
+                        <tr>
+                            <th class="p-2 font-medium">Time</th>
+                            <th class="p-2 font-medium">Transcript</th>
+                            <th class="p-2 font-medium">Intent</th>
+                            <th class="p-2 font-medium">Device</th>
+                            <th class="p-2 font-medium">Room</th>
+                            <th class="p-2 font-medium">Result</th>
+                            <th class="p-2 font-medium">Auth</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mini-command-body" class="text-xs text-slate-600 dark:text-slate-300">
+                        <tr><td colspan="7" class="p-4 text-center text-slate-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="font-semibold text-slate-800 dark:text-white text-sm">Mini Face Auth Log</h3>
+                <button onclick="fetchMiniFaceLogs()" class="text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sync-alt mr-1 text-blue-500"></i> Refresh
+                </button>
+            </div>
+            <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse">
+                    <thead class="text-[10px] text-slate-400 uppercase">
+                        <tr>
+                            <th class="p-2 font-medium">Time</th>
+                            <th class="p-2 font-medium">User</th>
+                            <th class="p-2 font-medium">Confidence</th>
+                            <th class="p-2 font-medium">Status</th>
+                            <th class="p-2 font-medium">Triggered by</th>
+                            <th class="p-2 font-medium">Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mini-face-body" class="text-xs text-slate-600 dark:text-slate-300">
+                        <tr><td colspan="6" class="p-4 text-center text-slate-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('status:update', (e) => {
+        const data = e.detail;
+        document.getElementById('tm-temp').textContent = `${data.sensors.temperature ?? '--'} °C`;
+        document.getElementById('tm-humidity').textContent = `${data.sensors.humidity ?? '--'} %`;
+        document.getElementById('tm-light').textContent = data.sensors.light ?? '--';
+        document.getElementById('tm-motion').textContent = data.sensors.motion ? 'Detected' : 'Clear';
+        document.getElementById('tm-light-state').textContent = (data.devices.light || '--').toUpperCase();
+        document.getElementById('tm-fan-state').textContent = (data.devices.fan || '--').toUpperCase();
+        document.getElementById('tm-door-state').textContent = (data.devices.door || '--').toUpperCase();
+    });
+
+    const STEP_STYLES = {
+        wait: { circle: 'border-2 border-slate-300 dark:border-slate-700 text-slate-400', label: 'text-slate-400', text: 'WAIT' },
+        active: { circle: 'bg-blue-500 border-2 border-blue-500 text-white', label: 'text-blue-500', text: 'RUNNING' },
+        done: { circle: 'bg-emerald-500 border-2 border-emerald-500 text-white', label: 'text-emerald-500', text: 'DONE' },
+        passed: { circle: 'bg-emerald-500 border-2 border-emerald-500 text-white', label: 'text-emerald-500', text: 'PASSED' },
+        success: { circle: 'bg-emerald-500 border-2 border-emerald-500 text-white', label: 'text-emerald-500', text: 'SUCCESS' },
+        pending: { circle: 'bg-amber-500 border-2 border-amber-500 text-white', label: 'text-amber-500', text: 'PENDING' },
+        rejected: { circle: 'bg-rose-500 border-2 border-rose-500 text-white', label: 'text-rose-500', text: 'REJECTED' },
+        failed: { circle: 'bg-rose-500 border-2 border-rose-500 text-white', label: 'text-rose-500', text: 'FAILED' },
+        skipped: { circle: 'border-2 border-slate-300 dark:border-slate-700 text-slate-400', label: 'text-slate-400', text: 'SKIP' },
+    };
+
+    function setStep(stepName, statusKey) {
+        const wrap = document.querySelector(`#pipeline-tracker [data-step="${stepName}"]`);
+        if (!wrap) return;
+        const style = STEP_STYLES[statusKey] || STEP_STYLES.wait;
+        const circle = wrap.querySelector('.step-circle');
+        const label = wrap.querySelector('.step-label');
+        circle.className = `step-circle w-7 h-7 rounded-full flex items-center justify-center transition ${style.circle}`;
+        if (statusKey === 'done' || statusKey === 'passed' || statusKey === 'success') {
+            circle.innerHTML = '<i class="fas fa-check text-[10px]"></i>';
+        } else if (statusKey === 'failed' || statusKey === 'rejected') {
+            circle.innerHTML = '<i class="fas fa-xmark text-[10px]"></i>';
+        }
+        label.className = `step-label font-semibold ${style.label}`;
+        label.textContent = style.text;
+    }
+
+    function resetPipeline() {
+        ['stt', 'llm', 'validation', 'face_auth', 'execution'].forEach((s, i) => {
+            const wrap = document.querySelector(`#pipeline-tracker [data-step="${s}"]`);
+            wrap.querySelector('.step-circle').innerHTML = String(i + 1);
+            setStep(s, 'wait');
+        });
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function animatePipeline(pipeline) {
+        const order = ['stt', 'llm', 'validation', 'face_auth', 'execution'];
+        for (const step of order) {
+            setStep(step, 'active');
+            await sleep(180);
+            setStep(step, pipeline[step].status);
+            await sleep(120);
+        }
+    }
+
+    async function sendCommand() {
+        const input = document.getElementById('command-input');
+        const sendBtn = document.getElementById('send-btn');
+        const text = input.value.trim();
+        if (!text) return;
+
+        sendBtn.disabled = true;
+        resetPipeline();
+        document.getElementById('stt-result').textContent = text;
+        document.getElementById('stt-confidence').textContent = '1.00';
+        document.getElementById('json-output').textContent = 'Processing...';
+        document.getElementById('bot-response').innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Đang xử lý...';
+
+        try {
+            const res = await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transcript: text }),
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+                document.getElementById('bot-response').textContent = data.error || 'Có lỗi xảy ra.';
+                return;
+            }
+
+            document.getElementById('json-output').textContent = JSON.stringify(data.command, null, 2);
+            await animatePipeline(data.pipeline);
+
+            const v = data.pipeline.validation;
+            document.getElementById('validation-status').textContent = v.status.toUpperCase();
+            document.getElementById('validation-status').className = `text-sm font-bold ${v.status === 'passed' ? 'text-emerald-500' : 'text-rose-500'}`;
+            document.getElementById('validation-detail').textContent = v.detail;
+
+            const f = data.pipeline.face_auth;
+            const faceColor = f.status === 'passed' ? 'text-emerald-500' : f.status === 'failed' ? 'text-rose-500' : 'text-slate-400';
+            document.getElementById('face-status').textContent = f.status.toUpperCase();
+            document.getElementById('face-status').className = `text-sm font-bold ${faceColor}`;
+            document.getElementById('face-detail').textContent = f.person_name
+                ? `${f.person_name} (${Math.round((f.confidence || 0) * 100)}%) — ${f.detail}`
+                : f.detail;
+
+            const ex = data.pipeline.execution;
+            const exColor = ex.status === 'success' ? 'text-emerald-500' : ex.status === 'pending' ? 'text-amber-500' : 'text-rose-500';
+            document.getElementById('execution-status').textContent = ex.status.toUpperCase();
+            document.getElementById('execution-status').className = `text-sm font-bold ${exColor}`;
+            document.getElementById('execution-detail').textContent = `${ex.detail} (${data.latency_ms ?? '--'} ms)`;
+
+            document.getElementById('bot-response').textContent = data.response || '--';
+            input.value = '';
+            fetchMiniCommandLogs();
+            fetchMiniFaceLogs();
+        } catch (err) {
+            console.error(err);
+            document.getElementById('bot-response').textContent = 'Không thể kết nối tới máy chủ.';
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+
+    document.getElementById('send-btn').addEventListener('click', sendCommand);
+    document.getElementById('command-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); sendCommand(); }
+    });
+    document.getElementById('copy-json').addEventListener('click', () => {
+        navigator.clipboard.writeText(document.getElementById('json-output').textContent);
+    });
+
+    async function fetchMiniCommandLogs() {
+        const tbody = document.getElementById('mini-command-body');
+        try {
+            const res = await fetch('/api/command-log?page=1&page_size=8');
+            const data = await res.json();
+            if (!data.rows.length) {
+                tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400">No logs found.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = data.rows.map(row => `
+                <tr class="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                    <td class="p-2 whitespace-nowrap text-slate-400">${Dash.fmtTime(row.timestamp)}</td>
+                    <td class="p-2 max-w-[140px] truncate" title="${Dash.escapeHtml(row.transcript)}">${Dash.escapeHtml(row.transcript || '-')}</td>
+                    <td class="p-2 text-slate-500">${Dash.escapeHtml(row.intent || '-')}</td>
+                    <td class="p-2">${Dash.escapeHtml(row.device || '-')}</td>
+                    <td class="p-2">${Dash.escapeHtml(row.room || '-')}</td>
+                    <td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-medium ${Dash.badgeFor('result', row.execution_status)}">${Dash.escapeHtml(row.result || '-')}</span></td>
+                    <td class="p-2">${row.face_auth ? 'Yes' : 'No'}</td>
+                </tr>
+            `).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-rose-400">Failed to load.</td></tr>`;
+        }
+    }
+
+    async function fetchMiniFaceLogs() {
+        const tbody = document.getElementById('mini-face-body');
+        try {
+            const res = await fetch('/api/face-log?page=1&page_size=6');
+            const data = await res.json();
+            if (!data.rows.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-400">No logs found.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = data.rows.map(row => {
+                const group = row.status === 'authorized' ? 'authorized' : row.status === 'denied' ? 'rejected' : 'unknown';
+                return `
+                <tr class="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                    <td class="p-2 whitespace-nowrap text-slate-400">${Dash.fmtTime(row.timestamp)}</td>
+                    <td class="p-2">${Dash.escapeHtml(row.person_name || 'Unknown')}</td>
+                    <td class="p-2">${Math.round((row.confidence || 0) * 100)}%</td>
+                    <td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-medium ${Dash.badgeFor('face', group)}">${group.toUpperCase()}</span></td>
+                    <td class="p-2 max-w-[120px] truncate">${Dash.escapeHtml(row.command_transcript || row.triggered_by || '-')}</td>
+                    <td class="p-2">${Dash.escapeHtml(row.action_result || '-')}</td>
+                </tr>
+            `}).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400">Failed to load.</td></tr>`;
+        }
+    }
+
+    fetchMiniCommandLogs();
+    fetchMiniFaceLogs();
+</script>
+{% endblock %}
