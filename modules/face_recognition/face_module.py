@@ -18,6 +18,8 @@ from __future__ import annotations
 import cv2
 import pickle
 import face_recognition
+import os
+import math
 import numpy as np
 from pathlib import Path
 
@@ -126,16 +128,112 @@ class SvmFaceRecognizer(FaceRecognizer):
             return {"person_name": None, "confidence": 0.0}
 
 
-def capture_frame():
+def eye_aspect_ratio(eye):
     """
-    Hàm hỗ trợ lấy một frame từ camera mặc định (OpenCV).
+    Tính toán Eye Aspect Ratio (EAR) dựa trên 6 tọa độ của mắt.
+    Dùng để phát hiện nhắm/mở mắt.
     """
+    # Chiều dọc
+    A = math.dist(eye[1], eye[5])
+    B = math.dist(eye[2], eye[4])
+    # Chiều ngang
+    C = math.dist(eye[0], eye[3])
+    return (A + B) / (2.0 * C)
+
+
+def capture_frame(timeout_seconds: int = 15, require_blink: bool = False):
+    """
+    Bật camera, hiển thị luồng video trực tiếp để dò khuôn mặt.
+    Hỗ trợ Liveness Detection (chớp mắt) nếu require_blink = True.
+    Vẽ khung xanh khi quét thấy khuôn mặt, giữ hình 1 giây rồi trả về frame sạch.
+    Nếu hết thời gian timeout mà không thấy ai, trả về None.
+    """
+    import time
+    
     cap = cv2.VideoCapture(0)
-    ret, frame = cap.read()
+    start_time = time.time()
+    best_frame = None
+
+    print(f"[Camera] Đang khởi động quét khuôn mặt (tối đa {timeout_seconds}s)...")
+    
+    has_blinked = False
+    eyes_were_closed = False
+    # Giảm threshold xuống thấp hơn để tránh nhận diện nhầm khi mắt hơi hé (từ 0.22 xuống 0.18)
+    EAR_THRESHOLD = 0.21
+
+    while time.time() - start_time < timeout_seconds:
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        # Tạo bản copy sạch để gửi về cho module nhận diện (không dính nét vẽ)
+        clean_frame = frame.copy()
+
+        # OpenCV đọc ảnh BGR, chuyển sang RGB cho thư viện face_recognition
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Dò tìm vị trí khuôn mặt
+        locations = face_recognition.face_locations(rgb_frame)
+
+        # Lấy landmarks nếu yêu cầu chớp mắt
+        landmarks_list = []
+        if require_blink and locations:
+            landmarks_list = face_recognition.face_landmarks(rgb_frame, locations)
+
+        # Vẽ khung cho từng khuôn mặt tìm thấy
+        for i, (top, right, bottom, left) in enumerate(locations):
+            status_text = "Scanning..."
+            status_color = (0, 255, 0) # Xanh lá mặc định
+
+            if require_blink:
+                if not has_blinked:
+                    status_text = "Please Blink..."
+                    status_color = (0, 255, 255) # Vàng
+                    
+                    if i < len(landmarks_list):
+                        landmarks = landmarks_list[i]
+                        left_eye = landmarks.get('left_eye')
+                        right_eye = landmarks.get('right_eye')
+                        
+                        if left_eye and right_eye:
+                            left_ear = eye_aspect_ratio(left_eye)
+                            right_ear = eye_aspect_ratio(right_eye)
+                            ear = (left_ear + right_ear) / 2.0
+                            
+                            # Hiển thị chỉ số EAR lên màn hình để dễ canh chỉnh
+                            cv2.putText(frame, f"EAR: {ear:.2f}", (left, bottom + 25), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
+                            
+                            if ear < EAR_THRESHOLD:
+                                eyes_were_closed = True
+                            elif ear >= EAR_THRESHOLD and eyes_were_closed:
+                                has_blinked = True
+                
+                if has_blinked:
+                    status_text = "Liveness Confirmed!"
+                    status_color = (0, 255, 0)
+
+            cv2.rectangle(frame, (left, top), (right, bottom), status_color, 2)
+            cv2.putText(frame, status_text, (left, top - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+
+        # Cập nhật cửa sổ hiển thị
+        cv2.imshow("Face ID Scanner", frame)
+        cv2.waitKey(1)
+
+        # Nếu đã bắt được khuôn mặt và thỏa điều kiện chớp mắt
+        if locations:
+            if not require_blink or has_blinked:
+                best_frame = clean_frame
+                # Tạm dừng 1 giây để người dùng nhìn thấy thông báo chốt lại
+                cv2.waitKey(1000)
+                break
+
+    # Dọn dẹp đóng camera
     cap.release()
-    if ret:
-        return frame
-    return None
+    cv2.destroyAllWindows()
+    
+    return best_frame
 
 
 __all__ = ["FaceRecognizer", "MockFaceRecognizer", "SvmFaceRecognizer", "capture_frame"]
