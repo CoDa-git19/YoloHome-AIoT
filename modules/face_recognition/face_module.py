@@ -15,8 +15,16 @@ Xem hợp đồng đầy đủ: docs/Integration-Contracts.md (Contract B).
 
 from __future__ import annotations
 
+import cv2
+import pickle
+import face_recognition
+import numpy as np
+from pathlib import Path
+
 from abc import ABC, abstractmethod
 from typing import Any
+
+from config.settings import MODELS_DIR
 
 
 class FaceRecognizer(ABC):
@@ -73,21 +81,61 @@ class MockFaceRecognizer(FaceRecognizer):
         }
 
 
-# TODO(Face owner): implement SvmFaceRecognizer.
-#
-# class SvmFaceRecognizer(FaceRecognizer):
-#     def __init__(self, model_path: Path = MODELS_DIR / "face_model.pkl") -> None:
-#         # load dlib detector + embedding model + SVM classifier từ model_path
-#         ...
-#
-#     def recognize(self, frame) -> dict[str, Any]:
-#         # 1. detect face trong frame
-#         # 2. nếu không có mặt -> {"person_name": None, "confidence": 0.0}
-#         # 3. tính embedding -> SVM predict + xác suất
-#         # 4. return {"person_name": name, "confidence": prob}
-#         raise NotImplementedError
-#
-# TODO(Face owner): hàm lấy frame từ camera (OpenCV VideoCapture) cho main.py.
+class SvmFaceRecognizer(FaceRecognizer):
+    """
+    Sử dụng thư viện face_recognition để detect và extract embedding,
+    sau đó dùng model SVM đã train (từ face_model.pkl) để phân loại.
+    """
+    def __init__(self, model_path: Path | None = None) -> None:
+        if model_path is None:
+            model_path = MODELS_DIR / "face_model.pkl"
+        
+        with open(model_path, "rb") as f:
+            self.clf = pickle.load(f)
+
+    def recognize(self, frame: Any) -> dict[str, Any]:
+        if frame is None:
+            return {"person_name": None, "confidence": 0.0}
+            
+        # Convert BGR (OpenCV) to RGB (face_recognition)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Detect faces
+        face_locations = face_recognition.face_locations(rgb_frame)
+        if not face_locations:
+            return {"person_name": None, "confidence": 0.0}
+            
+        # Get embeddings
+        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+        if not face_encodings:
+            return {"person_name": None, "confidence": 0.0}
+            
+        # Dùng khuôn mặt đầu tiên
+        encoding = np.array(face_encodings[0]).reshape(1, -1)
+        
+        # Predict
+        try:
+            name = self.clf.predict(encoding)[0]
+            # Lấy xác suất của class dự đoán
+            probabilities = self.clf.predict_proba(encoding)[0]
+            class_index = list(self.clf.classes_).index(name)
+            confidence = probabilities[class_index]
+            
+            return {"person_name": name, "confidence": float(confidence)}
+        except Exception:
+            return {"person_name": None, "confidence": 0.0}
 
 
-__all__ = ["FaceRecognizer", "MockFaceRecognizer"]
+def capture_frame():
+    """
+    Hàm hỗ trợ lấy một frame từ camera mặc định (OpenCV).
+    """
+    cap = cv2.VideoCapture(0)
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        return frame
+    return None
+
+
+__all__ = ["FaceRecognizer", "MockFaceRecognizer", "SvmFaceRecognizer", "capture_frame"]
