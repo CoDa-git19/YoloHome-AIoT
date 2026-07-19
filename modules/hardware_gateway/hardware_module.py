@@ -2,11 +2,35 @@ from config.settings import ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY
 from services.logging_service import log_error
 from system_core.observers import Subject
 
+
 class HardwareModule(Subject):
+    """
+    Cổng giao tiếp với Yolo:Bit.
+
+    HAI CHẾ ĐỘ
+    ----------
+    - serial_port="" (mặc định) -> CHẾ ĐỘ MÔ PHỎNG. Không mở cổng Serial,
+      giữ trạng thái trong bộ nhớ, trả dữ liệu cảm biến cố định.
+    - serial_port="COM3" (ví dụ) -> chế độ thật, đọc/ghi qua Serial.
+
+    Chế độ mô phỏng KHÔNG PHẢI tiện ích tạm bợ, mà là ràng buộc bắt buộc:
+    toàn bộ test suite của nhóm chạy trên máy không cắm Yolo:Bit. Nếu
+    __init__ mở cổng Serial thật thì test của mọi người sẽ gãy.
+    Xem tests/pattern/test_observer_pattern.py.
+    """
+
     def __init__(self, serial_port: str = ""):
         super().__init__()
         self._serial_port = serial_port
+
+        # Cờ tường minh để phần code Serial sau này rẽ nhánh.
+        self.simulation_mode = not serial_port
+
         self._states: dict[tuple[str, str], str] = {}
+
+        # Adafruit IO client được tạo LƯỜI và dùng lại.
+        # Nếu tạo mới mỗi lần publish, chạy 24/7 sẽ tạo hàng nghìn client.
+        self._aio_client = None
 
     # Trạng thái mà mỗi action đưa thiết bị về.
     ACTION_TO_STATE = {
@@ -73,6 +97,13 @@ class HardwareModule(Subject):
             return {"status": "error", "message": str(exc)}
 
     def read_sensors(self) -> dict:
+        """
+        Đọc cảm biến.
+
+        4 KHÓA NÀY LÀ HỢP ĐỒNG. RuleService dựa vào chúng để khớp với
+        condition["sensor"]. Đổi tên khóa khi nối Serial thật sẽ làm MỌI
+        automation rule ngừng kích hoạt mà không hề báo lỗi.
+        """
         # TODO: replace with real Serial read from Yolo:Bit
         return {"temperature": 28.5, "humidity": 70.0, "light": 512, "motion": 0}
 
@@ -90,18 +121,59 @@ class HardwareModule(Subject):
 
         return sensor_data
 
-    def publish_to_adafruit(self, data: dict) -> None:
+    # =========================================================================
+    # Adafruit IO
+    # =========================================================================
+
+    def _get_aio_client(self):
+        """
+        Trả về Adafruit IO client, tạo lười và dùng lại.
+
+        Trả None khi chưa cấu hình credentials hoặc chưa cài package - khi
+        đó publish_to_adafruit() bỏ qua im lặng thay vì spam error_log.
+        """
+        if self._aio_client is not None:
+            return self._aio_client
+
+        if not ADAFRUIT_IO_USERNAME or not ADAFRUIT_IO_KEY:
+            return None
+
         try:
             from Adafruit_IO import Client
-
-            aio = Client(ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY)
-            for key, value in data.items():
-                feed_key = f"home-{key}"
-                try:
-                    aio.send_data(feed_key, value)
-                except Exception as exc:
-                    log_error("adafruit", f"Failed to publish to feed '{feed_key}': {exc}")
         except ImportError:
             log_error("adafruit", "Adafruit_IO package not installed")
+            return None
+
+        try:
+            self._aio_client = Client(ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY)
         except Exception as exc:
-            log_error("adafruit", f"publish_to_adafruit error: {exc}")
+            log_error("adafruit", f"Failed to create Adafruit IO client: {exc}")
+            return None
+
+        return self._aio_client
+
+    def publish_to_adafruit(self, data: dict) -> None:
+        """
+        Đẩy dữ liệu cảm biến lên Adafruit IO.
+
+        KHÔNG gọi trực tiếp từ vòng cảm biến. Dùng AdafruitPublisher trong
+        system_core/observers.py, vì nó có giới hạn tần suất. Gói free chỉ
+        cho 30 data point/phút TÍNH GỘP mọi feed, mà mỗi lần gọi hàm này
+        gửi 1 request cho MỖI cảm biến.
+        Nguồn: https://io.adafruit.com/api/docs/
+        """
+        aio = self._get_aio_client()
+        if aio is None:
+            return
+
+        for key, value in data.items():
+            feed_key = f"home-{key}"
+            try:
+                aio.send_data(feed_key, value)
+            except Exception as exc:
+                log_error("adafruit", f"Failed to publish to feed '{feed_key}': {exc}")
+
+                # Kết nối có thể đã hỏng (token hết hạn, đổi mạng).
+                # Bỏ client để lần sau tạo lại thay vì hỏng vĩnh viễn.
+                self._aio_client = None
+                return
