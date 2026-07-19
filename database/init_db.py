@@ -14,7 +14,12 @@ def init_db() -> None:
 
     reset_db = os.getenv("YOLOHOME_RESET_DB", "").strip().lower() in {"1", "true", "yes"}
     if reset_db and DB_PATH.exists():
-        DB_PATH.unlink()
+        try:
+            DB_PATH.unlink()
+        except OSError as exc:
+            # Windows khóa file khi còn connection mở (WinError 32).
+            # Schema idempotent nên vẫn chạy tiếp được, chỉ là không reset.
+            print(f"[init_db] Không xóa được {DB_PATH.name}: {exc}")
 
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 
