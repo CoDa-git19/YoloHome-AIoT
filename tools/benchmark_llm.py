@@ -25,7 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import platform
 import statistics
+from datetime import datetime
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -166,6 +168,28 @@ class ModelReport:
     @property
     def latency_max(self) -> int:
         return max(self.latencies) if self.latencies else 0
+
+    @property
+    def by_group(self) -> dict[str, tuple[int, int]]:
+        """
+        Phân rã theo nhóm: {tên nhóm: (số câu đúng, tổng số câu)}.
+
+        Một con số tổng 100% không cho biết phân bố. Nếu bộ dữ liệu lệch hẳn về
+        nhóm dễ, tổng vẫn đẹp mà kết luận thì yếu. Bảng này để người đọc tự
+        kiểm chứng điều đó.
+        """
+        groups: dict[str, list[bool]] = {}
+        seen: set[tuple[str, str]] = set()
+
+        for r in self.results:
+            # nhiều lượt -> chỉ đếm mỗi câu một lần, lấy lượt đầu
+            key = (r.group, r.case_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            groups.setdefault(r.group, []).append(r.next_step_ok)
+
+        return {g: (sum(v), len(v)) for g, v in sorted(groups.items())}
 
     @property
     def failures(self) -> list[CaseResult]:
@@ -315,10 +339,57 @@ def run_model(
 # Báo cáo
 # =============================================================================
 
-def format_markdown(reports: list[ModelReport]) -> str:
+def sdk_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("google-genai")
+    except Exception:
+        return "unknown"
+
+
+def provenance(reports: list[ModelReport], dataset: dict, rpm: int) -> list[str]:
+    """
+    Ghi lại ĐIỀU KIỆN ĐO cùng với kết quả.
+
+    Một file kết quả không có xuất xứ thì không dùng để phát hiện drift được:
+    khi chạy lại sau vài tháng và ra số khác, sẽ không biết là model đổi, SDK
+    đổi, hay chỉ là chạy trong hoàn cảnh khác.
+    """
+    from config.settings import (
+        GEMINI_STRUCTURED_OUTPUT,
+        GEMINI_TEMPERATURE,
+        GEMINI_THINKING_LEVEL,
+    )
+
+    return [
+        "### Điều kiện đo\n",
+        "| Hạng mục | Giá trị |",
+        "|---|---|",
+        f"| Ngày chạy | {datetime.now().strftime('%Y-%m-%d %H:%M')} |",
+        f"| Bộ dữ liệu | `benchmark/dataset.json` v{dataset.get('version', '?')}, "
+        f"{len(dataset.get('cases', []))} câu |",
+        f"| Số lượt mỗi model | {max(r.runs for r in reports) if reports else 1} |",
+        f"| Giới hạn request | {str(rpm) + '/phút' if rpm else 'không đặt'} |",
+        f"| temperature | {GEMINI_TEMPERATURE} |",
+        f"| thinking_level | {GEMINI_THINKING_LEVEL or '(mặc định)'} |",
+        f"| structured output | {GEMINI_STRUCTURED_OUTPUT} |",
+        f"| SDK google-genai | {sdk_version()} |",
+        f"| Python | {platform.python_version()} |",
+        "",
+    ]
+
+
+def format_markdown(
+    reports: list[ModelReport],
+    dataset: dict | None = None,
+    rpm: int = 0,
+) -> str:
     lines: list[str] = []
 
     lines.append("## Đánh giá mô hình LLM cho bài toán hiểu câu lệnh tiếng Việt\n")
+
+    if dataset is not None:
+        lines.extend(provenance(reports, dataset, rpm))
     lines.append(
         "Cùng một pipeline (prompt sinh từ config, JSON schema sinh từ "
         "device_registry, validator, policy enforcement, router). "
@@ -349,6 +420,18 @@ def format_markdown(reports: list[ModelReport]) -> str:
         )
 
     lines.append("")
+
+    for report in reports:
+        lines.append(f"### Phân rã theo nhóm — `{report.label}`\n")
+        lines.append("| Nhóm | Số câu | Đúng | Tỉ lệ |")
+        lines.append("|---|---|---|---|")
+        for group, (ok, total) in report.by_group.items():
+            lines.append(f"| {group} | {total} | {ok} | {100.0 * ok / total:.1f}% |")
+        total_ok = sum(ok for ok, _ in report.by_group.values())
+        total_all = sum(t for _, t in report.by_group.values())
+        lines.append(f"| **Tổng** | **{total_all}** | **{total_ok}** "
+                     f"| **{100.0 * total_ok / total_all:.1f}%** |")
+        lines.append("")
 
     multi = [r for r in reports if r.runs > 1]
     if multi:
@@ -519,7 +602,7 @@ def main() -> None:
 
     print_summary(reports)
 
-    markdown = format_markdown(reports)
+    markdown = format_markdown(reports, dataset=dataset, rpm=args.rpm)
 
     if args.out:
         Path(args.out).write_text(markdown, encoding="utf-8")
@@ -528,3 +611,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
