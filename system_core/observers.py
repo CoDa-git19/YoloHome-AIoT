@@ -225,6 +225,52 @@ class AdafruitPublisher(Observer):
         self.hardware_module.publish_to_adafruit(sensor_data)
 
 
+SENSOR_PERSIST_INTERVAL = 30.0
+
+
+class SensorPersistObserver(Observer):
+    """
+    Ghi sensor_log xuống SQLite.
+
+    CÓ GIỚI HẠN TẦN SUẤT
+    --------------------
+    Vòng cảm biến chạy 2 giây/lần và read_sensors() trả 4 khóa, tức là
+    120 dòng/phút nếu ghi mỗi lần. Dữ liệu môi trường thay đổi chậm nên
+    30 giây là quá đủ cho biểu đồ dashboard, và giữ DB ở mức 8 dòng/phút.
+
+    Lỗi ghi DB KHÔNG được làm sập rule engine. Subject.notify() đã cô lập
+    lỗi từng observer nên chuyện đó không xảy ra.
+    """
+
+    def __init__(
+        self,
+        logging_service: Any,
+        min_interval: float = SENSOR_PERSIST_INTERVAL,
+        source: str = "hardware",
+    ) -> None:
+        self.logging_service = logging_service
+        self.min_interval = min_interval
+        self.source = source
+        self.written_count = 0
+        self.skipped_count = 0
+        self._last_write: float | None = None
+
+    def update(self, sensor_data: SensorData) -> None:
+        now = time.monotonic()
+        if self._last_write is not None:
+            if now - self._last_write < self.min_interval:
+                self.skipped_count += 1
+                return
+
+        self._last_write = now
+        self.written_count += 1
+
+        # read_sensors() không kèm source -> mọi dòng sẽ là "unknown".
+        payload = dict(sensor_data)
+        payload["source"] = self.source
+        self.logging_service.update(payload)
+
+
 __all__ = [
     "Observer",
     "Subject",
@@ -232,4 +278,6 @@ __all__ = [
     "SensorLoggingObserver",
     "AdafruitPublisher",
     "ADAFRUIT_MIN_PUBLISH_INTERVAL",
+    "SensorPersistObserver",
+    "SENSOR_PERSIST_INTERVAL",
 ]
