@@ -1,70 +1,70 @@
-# Hệ thống Nhận diện Khuôn mặt (Face Recognition Module)
+# Face Recognition Module
 
-Tài liệu này mô tả chi tiết 2 giai đoạn chính để xây dựng và vận hành module xác thực khuôn mặt cho hệ thống YoloHome-AIoT: **Giai đoạn Huấn luyện mô hình (Training)** và **Giai đoạn Thực thi (Inference)**.
+This document describes in detail the 2 main phases for building and operating the face authentication module for the YoloHome-AIoT system: the **Model Training Phase** and the **Inference Phase**.
 
 ---
 
-## 1. Giai đoạn Huấn luyện Mô hình (Training Phase)
+## 1. Model Training Phase
 
-Giai đoạn này tập trung vào việc thu thập dữ liệu thực tế từ các thành viên trong gia đình và huấn luyện một mô hình AI có khả năng phân loại độ chính xác cao.
+This phase focuses on collecting real-world data from household members and training an AI model capable of high-accuracy classification.
 
-### 1.1. Thu thập dữ liệu ảnh (Dataset)
-Bộ dữ liệu được xây dựng bằng cách thu thập ảnh trên mạng để mô phỏng danh tính các thành viên. Bạn có thể tham khảo toàn bộ dữ liệu ảnh gốc và các script huấn luyện trên Colab tại liên kết dưới đây:
+### 1.1. Image Dataset Collection
+The dataset is built by collecting images from the internet to simulate the identities of household members. You can access the full image dataset and training scripts on Colab via the link below:
 
 **🔗 [Link Google Drive: Face_recognition Dataset & Colab Notebooks](https://drive.google.com/drive/folders/1x1XhBWTxF0KHK5n6sOTO_CTqfcDZ2btS?usp=sharing)**
 
-- **Số lượng:** Tải khoảng **100 bức ảnh từ Internet** để làm đại diện cho mỗi người (mỗi class).
-- **Đa dạng hóa:** Các bức ảnh thu thập cần bao phủ nhiều góc độ và điều kiện khác nhau: nhìn thẳng, nghiêng trái/phải, ánh sáng tốt, ánh sáng yếu, v.v. để mô hình học được đặc trưng tốt nhất.
-- **Nhóm "Người lạ" (Unknown):** Tải thêm khoảng 100 bức ảnh của những người ngẫu nhiên (từ internet) và gán vào class `Unknown`. Điều này giúp AI học cách từ chối những khuôn mặt không có trong cơ sở dữ liệu.
-- **Tổ chức thư mục:** Dữ liệu cần được lưu trữ theo cấu trúc chuẩn:
+- **Quantity:** Download approximately **100 images from the Internet** to represent each person (each class).
+- **Diversity:** The collected images must cover a wide range of angles and conditions: front-facing, left/right profile, good lighting, low lighting, etc., so the model can learn the best possible features.
+- **"Unknown" Group:** Download an additional ~100 images of random people (from the internet) and assign them to the `Unknown` class. This helps the AI learn to reject faces that are not in the database.
+- **Directory Structure:** Data must be stored in the following standard structure:
   ```text
   dataset/
-  ├── [Ten_Thanh_Vien_1]/
+  ├── [Member_Name_1]/
   │   ├── img_1.jpg
   │   └── ...
-  ├── [Ten_Thanh_Vien_2]/
+  ├── [Member_Name_2]/
   ├── Unknown/
   └── ...
   ```
 
-### 1.2. Trích xuất Embedding và Huấn luyện SVM
-Sử dụng script Python (hoặc Google Colab) để quét qua thư mục `dataset/`:
-1. **Trích xuất đặc trưng (Embedding):** Dùng thư viện `dlib` để chuyển đổi từng khuôn mặt thành một vector 128 chiều (128D).
-2. **Huấn luyện mô hình phân loại (SVM):**
-   - Sử dụng thuật toán **Support Vector Machine (SVM)** từ thư viện `scikit-learn`.
-   - Dữ liệu được chia tỷ lệ **80% Train / 20% Hold-out Test**.
-   - **Tối ưu hóa (GridSearchCV):** Chạy dò tìm siêu tham số trên Kernel `rbf` (các giá trị `C` và `gamma`) bằng Stratified 5-Fold Cross Validation.
-   - **Chống mất cân bằng dữ liệu:** SVM được cấu hình với `class_weight='balanced'` và `probability=True`.
+### 1.2. Embedding Extraction & SVM Training
+Use a Python script (or Google Colab) to scan through the `dataset/` directory:
+1. **Feature Extraction (Embedding):** Use the `dlib` library to convert each face into a 128-dimensional vector (128D).
+2. **Classifier Training (SVM):**
+   - Use the **Support Vector Machine (SVM)** algorithm from the `scikit-learn` library.
+   - Data is split at an **80% Train / 20% Hold-out Test** ratio.
+   - **Hyperparameter Tuning (GridSearchCV):** Run a hyperparameter search over the `rbf` kernel (values of `C` and `gamma`) using Stratified 5-Fold Cross Validation.
+   - **Class Imbalance Handling:** SVM is configured with `class_weight='balanced'` and `probability=True`.
 
-### 1.3. Đánh giá Mô hình (Evaluation) & Lưu trữ
-Hệ thống sử dụng cơ chế **Confidence Threshold >= 80%**. Nếu xác suất dự đoán của SVM dưới 80%, kết quả sẽ bị ép về class `Unknown`.
-Mô hình sau đó được đánh giá qua các chỉ số:
+### 1.3. Model Evaluation & Storage
+The system uses a **Confidence Threshold >= 80%** mechanism. If the SVM's predicted probability falls below 80%, the result is forced to the `Unknown` class.
+The model is then evaluated using the following metrics:
 - **Accuracy, Precision, Recall, F1-score**.
-- **FAR (False Accept Rate):** Tỷ lệ nhận diện nhầm người lạ thành người nhà (càng thấp càng bảo mật).
-- **FRR (False Reject Rate):** Tỷ lệ từ chối người nhà.
-- Sau khi hoàn tất, kết quả đánh giá sẽ được ghi vào file `evaluation_metrics.txt` và mô hình được nén lại thành file `face_model.pkl`.
+- **FAR (False Accept Rate):** The rate at which strangers are incorrectly recognized as household members (lower is more secure).
+- **FRR (False Reject Rate):** The rate at which household members are incorrectly rejected.
+- Upon completion, the evaluation results are written to `evaluation_metrics.txt` and the model is packaged into `face_model.pkl`.
 
 ---
 
-## 2. Giai đoạn Thực thi (Inference Phase)
+## 2. Inference Phase
 
-File `face_model.pkl` thu được từ giai đoạn 1 sẽ được nạp vào hệ thống Gateway để chạy trong thời gian thực (Real-time).
+The `face_model.pkl` file obtained from Phase 1 is loaded into the Gateway system to run in real-time.
 
-### 2.1. Tích hợp Liveness Detection (Chống giả mạo)
-Để ngăn chặn kẻ gian dùng ảnh in hoặc video phát qua điện thoại để mở khóa, hệ thống yêu cầu người dùng phải **chớp mắt** trước camera.
-- Module tính toán **Eye Aspect Ratio (EAR)** dựa trên 6 điểm tọa độ quanh mắt.
-- Nếu EAR giảm xuống dưới ngưỡng (VD: `0.20`) rồi tăng lại, hệ thống ghi nhận có một cái chớp mắt thực sự (Liveness Confirmed!).
-- Sau khi xác nhận người thật, khung hình sạch mới được chuyển đi để trích xuất đặc trưng và nhận diện tên.
+### 2.1. Liveness Detection Integration (Anti-Spoofing)
+To prevent attackers from using printed photos or videos played on a phone to unlock the system, users are required to **blink** in front of the camera.
+- The module calculates the **Eye Aspect Ratio (EAR)** based on 6 coordinate points around the eye.
+- If the EAR drops below a threshold (e.g., `0.20`) and then rises again, the system registers a genuine blink (Liveness Confirmed!).
+- After confirming a real person, a clean frame is then passed for feature extraction and face recognition.
 
-### 2.2. Luồng xử lý trên Gateway
-1. **Lệnh bằng giọng nói:** Người dùng ra lệnh cần bảo mật (VD: *"Mở cửa chính"*).
-2. **Kích hoạt Camera:** `AuthService` gọi hàm `capture_frame(require_blink=True)` để bật webcam, hiển thị giao diện quét (vẽ khung xanh/vàng).
-3. **Phân tích:** Khung hình được chuyển cho `SvmFaceRecognizer`. Hệ thống convert sang ảnh RGB, dò khuôn mặt bằng `face_recognition` và dự đoán bằng `face_model.pkl`.
-4. **Phê duyệt lệnh:** Nếu người dùng đúng là thành viên trong nhà, Gateway sẽ xuất lệnh cho phần cứng mở cửa và tự động ghi log khuôn mặt vào cơ sở dữ liệu.
+### 2.2. Gateway Processing Flow
+1. **Voice Command:** The user issues a security-sensitive command (e.g., *"Open the front door"*).
+2. **Camera Activation:** `AuthService` calls `capture_frame(require_blink=True)` to activate the webcam and display the scanning interface (drawing green/yellow bounding boxes).
+3. **Analysis:** The frame is passed to `SvmFaceRecognizer`. The system converts it to an RGB image, detects faces using `face_recognition`, and makes predictions using `face_model.pkl`.
+4. **Command Approval:** If the user is confirmed to be a household member, the Gateway sends a command to the hardware to unlock the door and automatically logs the face into the database.
 
-### 2.3. Kiểm thử Độc lập
-Bạn có thể kiểm tra tính năng nhận diện và chống giả mạo mà không cần bật cả hệ thống AIoT bằng lệnh:
+### 2.3. Standalone Testing
+You can test the recognition and anti-spoofing features without running the entire AIoT system using the command:
 ```bash
 python -m tools.test_face
 ```
-Lệnh này giúp bạn dễ dàng canh chỉnh lại ngưỡng chớp mắt `EAR_THRESHOLD` cho phù hợp với ánh sáng phòng và góc đặt camera thực tế.
+This command makes it easy to fine-tune the blink threshold `EAR_THRESHOLD` to suit the actual room lighting and camera angle.
