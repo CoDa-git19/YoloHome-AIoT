@@ -144,10 +144,36 @@ ok = command_service.execute_authorized_command(result["command"])  # -> bool
    - `update_command_result` — `services/logging_service.py:276`.
    - Valid `face_log.status`: `authorized`, `denied`, `no_face`, `timeout`.
 
-`services/auth_service.py` already implements this glue (threshold, execute,
-logging). The Face owner only needs to implement `FaceRecognizer.recognize()` and
-wire in a real camera frame; the rest works as-is with the provided
-`MockFaceRecognizer`.
+### Current status
+
+`services/auth_service.py` is **empty — not yet written** (owner: Ly). Until it
+lands, `system_core/main.py` runs a temporary fallback in `_fallback_auth()` that
+calls `face_module.recognize(frame)` directly. That fallback already fails closed
+and closes the DB log correctly, so treat it as a working reference when writing
+`AuthService`.
+
+What still needs building:
+
+1. `modules/face_recognition/face_module.py` — owner: Face
+   - `FaceRecognizer` (ABC) and `MockFaceRecognizer` **already exist**.
+   - Still TODO: `SvmFaceRecognizer` — dlib 128-D embeddings + SVM classifier
+     loaded from `models/face_model.pkl`.
+
+2. `services/auth_service.py` — owner: Ly
+   - `AuthService(command_service, face_recognizer)`
+   - `authorize_and_execute(result: dict, frame=None) -> dict`
+   - Applies `FACE_AUTH_THRESHOLD`, calls `execute_authorized_command`, then
+     writes `log_face` + `update_command_result` using `command_id`.
+
+> ⚠️ **`frame=None` MUST be treated as `no_face` and denied.**
+> `MockFaceRecognizer.recognize()` ignores its `frame` argument entirely — it
+> returns a fixed identity even for `None`. `main.py.capture_frame()` returns
+> `None` until a camera is wired in. Without an explicit `if frame is None`
+> guard in `AuthService`, the door opens with no camera present at all.
+
+Once `AuthService` is ready, set `orchestrator.auth_service = AuthService(...)` in
+`main.py`. The fallback branch then stops running and can be deleted along with
+`_close_auth_log()`.
 
 ---
 
@@ -188,7 +214,7 @@ while True:
 
     if result["next_step"] == "auth_required":
         # (3b) auth handoff: pass the enforced command straight through.
-        frame = capture_frame()         # Face owner supplies this
+        frame = orchestrator.capture_frame()         # Face owner supplies this
         outcome = auth_service.authorize_and_execute(result, frame=frame)
         say(outcome["response"])
     else:
