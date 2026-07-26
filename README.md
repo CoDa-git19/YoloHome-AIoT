@@ -9,37 +9,71 @@ Since our team consists of 5 members working across completely different domains
 
 ```text
 .
-├── config/                 # System configurations and JSON schemas
-│   ├── command_schema.json
-│   ├── device_registry.json
-│   └── settings.py
-├── data/                   # Local data storage (.gitkeep)
-├── database/               # Database initialization and schemas
-│   ├── README_DB.md
-│   ├── init_db.py
-│   └── schema.sql
-├── docs/                   # Project documentation
-│   └── Project-Structure-Overview.md
-├── modules/                # Core system modules
-│   ├── face_recognition/   # Camera & Face ID processing
-│   ├── hardware_gateway/   # Yolo:Bit & MQTT communication
-│   ├── llm_integration/    # Gemini/LLM prompt and parsing
-│   └── speech_recognition/ # Speech-to-Text processing
-├── services/               # Business logic and cross-module services
-│   ├── auth_service.py
-│   ├── command_service.py
-│   ├── logging_service.py
-│   └── rule_service.py
-├── system_core/            # Main orchestration
-│   └── main.py
-├── tests/                  # Unit and integration tests
-│   ├── test_command_pipeline.py
-│   ├── test_llm_module.py
-│   └── test_validator.py
-└── web_dashboard/          # Flask web UI and HTML templates
-    ├── app.py
-    └── templates/          # UI views (agent_console, command_log, etc.)
+├── benchmark/          # Labelled dataset for LLM evaluation
+├── config/             # Shared runtime config, schemas, aliases, capabilities
+├── database/           # SQLite schema, initializer, and DB documentation
+├── diagrams/           # Design pattern and architecture diagrams
+├── docs/               # Project documentation
+├── modules/            # AIoT modules: LLM, face, speech, hardware gateway
+├── services/           # Application services and orchestration logic
+├── system_core/        # Core abstractions and design pattern implementations
+├── tests/              # Unit and integration tests grouped by concern
+├── tools/              # Diagnostic & benchmark scripts (run via python -m tools.*)
+├── web_dashboard/      # Flask dashboard UI
+├── .env.example        # Example environment variables
+├── docker-compose.yml  # Optional containerized runtime setup
+├── README.md           # English documentation
+└── README-vi.md        # Vietnamese documentation
 ```
+
+The LLM command pipeline spans several directories. Key files:
+
+```text
+modules/llm_integration/
+├── llm_module.py         # Core parser: prompt, Gemini call, retry, routing
+├── llm_strategy.py       # GeminiLLMStrategy, MockLLMStrategy
+├── openai_strategy.py    # OpenAILLMStrategy (proves the Strategy Pattern)
+├── validator.py          # Schema validation + server-side face_auth policy
+└── prompt_template.txt   # Prompt template (placeholders filled from config)
+
+services/
+├── command_service.py    # Orchestrates the full transcript -> hardware pipeline
+├── session_service.py    # Multi-turn slot filling (pending command store)
+├── rule_service.py       # Edge-triggered automation rules
+├── logging_service.py    # Command / error logging to SQLite
+└── auth_service.py       # Face-auth flow (owned by the Face module)
+
+system_core/
+├── commands.py           # Command Pattern (device actions, undo, registry)
+├── strategies.py         # LLMStrategy interface
+├── observers.py          # Observer Pattern: sensors -> rules pipeline
+├── contracts.py          # Startup interface-contract checks
+└── main.py               # Application entry point
+
+tools/
+├── check_setup.py        # Verify config + DB + pipeline (offline)
+├── probe_gemini.py       # List models available to your API key
+├── smoke_gemini.py       # 10 real Gemini calls, checks the pipeline
+└── benchmark_llm.py      # Provider-agnostic benchmark, Markdown output
+```
+
+Important configuration files:
+
+```text
+config/
+├── command_schema.json       # JSON command schema, intents, sensors, operators
+├── device_registry.json      # Supported rooms, devices, and actions
+├── language_aliases.json     # Vietnamese aliases for mock command parsing
+├── device_capabilities.json  # Generic/special command behavior and safety policy
+├── capabilities.py           # Capability policy resolver
+└── settings.py               # Runtime paths and environment variables
+```
+
+Runtime files such as `database/yolohome.db`, `__pycache__/`, `.pytest_cache/`,
+`.env`, and `venv/` should not be committed.
+
+For the LLM command pipeline, Strategy Pattern, and Command Pattern design,
+see [`docs/LLM-Command-Strategy-Overview.md`](docs/LLM-Command-Strategy-Overview.md).
 
 ---
 
@@ -99,18 +133,61 @@ pip install -r requirements.txt
 
 ### 2.5 Set up Environment Variables:
 
-Ask the team member in charge of each module for the secret keys. Create a .env file in the root directory and add them:
-```bash
-GEMINI_API_KEY="your_api_key"
-ADAFRUIT_IO_USERNAME="your_username"
-ADAFRUIT_IO_KEY="your_key"
-DATABASE_URL="sqlite:///database/smart_home.db"
-FLASK_ENV="development"
+Copy the example environment file:
 
+```powershell
+Copy-Item .env.example .env
 ```
 
-### 2.6 Run the Application:
-To verify your setup is fully working, run the main gateway:
+Or on macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+Ask the team member in charge of each module for the secret keys. Create a .env file in the root directory and add them:
+```bash
+# LLM engine: keep true for offline dev/tests (no API quota used)
+USE_MOCK_LLM=true
+GEMINI_API_KEY="your_api_key"
+
+# IMPORTANT: pin a stable model. As of 07/2026 gemini-2.5-flash and
+# gemini-2.5-flash-lite return 404 for new users. Do NOT use "-latest"
+# aliases (they hot-swap and break benchmark reproducibility).
+# Run `python -m tools.probe_gemini` to see which models your key can use.
+GEMINI_MODEL="gemini-3.1-flash-lite"
+GEMINI_THINKING_LEVEL=minimal
+GEMINI_STRUCTURED_OUTPUT=true
+
+ADAFRUIT_IO_USERNAME="your_username"
+ADAFRUIT_IO_KEY="your_key"
+
+DATABASE_URL="sqlite:///database/yolohome.db"
+FLASK_ENV="development"
+
+FACE_AUTH_THRESHOLD=0.80
+```
+
+For offline development and unit tests, keep `USE_MOCK_LLM=true`.
+For real Gemini calls, set `USE_MOCK_LLM=false` and provide `GEMINI_API_KEY`.
+
+Never commit the real `.env` file. Commit `.env.example` only.
+
+---
+
+### 2.6 Verify your setup:
+
+Run the full offline test suite first (no API quota used):
+```bash
+python -m pytest -q
+```
+
+Then check config, database, and the command pipeline end-to-end:
+```bash
+python -m tools.check_setup
+```
+
+To verify the whole gateway, run the main entry point:
 ```bash
 python system_core/main.py
 ```
@@ -118,33 +195,40 @@ To run the Flask dashboard separately:
 ```bash
 python web_dashboard/app.py
 ```
+
+### 2.7 LLM diagnostic tools (optional, uses API quota):
+```bash
+python -m tools.probe_gemini     # list models available to your key
+python -m tools.smoke_gemini     # 10 real Gemini calls, checks the pipeline
+python -m tools.benchmark_llm --models gemini-3.1-flash-lite --rpm 15
+```
+> Gemini free tier allows 15 requests/minute. Always pass `--rpm 15` so quota
+> errors don't pollute your benchmark results.
 ---
 
 ## 3. Project Structure & Boundaries
 
 To avoid merge conflicts, **only work within your assigned module directory**:
 
-`modules/speech_recognition/`: PhoWhisper and VAD integration.
+`modules/llm_integration/`: Gemini prompting, JSON parsing, mock command parsing, and validation integration.
 
-`modules/llm_integration/`: Gemini API prompting and JSON parsing.
+`modules/speech_recognition/`: Speech-to-Text integration.
 
-`modules/face_recognition/`: dlib embeddings and OpenCV frame processing.
+`modules/face_recognition/`: Face recognition and camera processing.
 
-`modules/hardware_gateway/`: Yolo:Bit serial communication and MQTT.
+`modules/hardware_gateway/`: Yolo:Bit, serial, MQTT, or IoT gateway communication.
 
-`services/`: Application-level services, including command orchestration, authentication flow, logging, and rule handling.
+`services/`: Application-level services such as command orchestration, auth flow, logging, and rule handling.
 
-`system_core/`: System integration and Design Patterns (Observer, Strategy).
+`system_core/`: Core abstractions and design pattern implementations, including Command and Strategy.
 
-`web_dashboard/`: Flask application and UI.
+`config/`: Shared runtime configuration, schemas, device registry, aliases, and capability policy.
 
 `database/`: SQLite schema, initialization script, and database documentation.
 
-`config/`: Shared system configuration such as device registry and LLM command schema.
+`web_dashboard/`: Flask dashboard application and templates.
 
-`tests/`: Unit tests and mock integration tests.
-
----
+`tests/`: Unit and integration tests grouped into `db/`, `llm/`, `pattern/`, and `service/`. The full suite runs offline with mocked LLM (no API quota): `python -m pytest -q`.
 
 ## 4. Branching Strategy (GitHub Flow)
 
@@ -203,10 +287,52 @@ Once your feature works perfectly on your machine, it's time to merge it into `m
 
 - After creating the PR, simply click **Merge pull request**.
 
-## 🆘 7. Troubleshooting & Rules of Thumb
+## 7. LLM Module Integration Contracts
+
+The LLM command pipeline was hardened with server-side security, multi-turn
+conversation, API resilience, and edge-triggered automation rules. If you
+integrate with it, three contracts matter:
+
+1. **`LLMStrategy.parse_and_validate()`** takes a `pending_command` argument
+   (multi-turn slot filling). Any custom strategy must accept it, or
+   `CommandService` raises `ContractError` at startup.
+
+2. **Hardware `execute_command(action="get_status")`** must return
+   `{"status": "success", "state": "on"|"off"|"open"|"closed"}`. A missing
+   `"state"` does not crash the system, but the user always hears
+   "unknown state".
+
+3. **`main.py` must wire the Observer**, or automation rules never run — and
+   they fail silently, with no error and no log:
+   ```python
+   hardware.attach(RuleObserver(rules, service))
+   while True:
+       hardware.poll_sensors()   # the system heartbeat
+       time.sleep(2)
+   ```
+
+Security principle: **the LLM understands intent; it does not make security
+decisions.** The server enforces `face_auth` from config, ignoring whatever the
+LLM returns. See
+[`docs/LLM-Command-Strategy-Overview.md`](docs/LLM-Command-Strategy-Overview.md).
+
+If you own the **STT** or **Face** module, the exact shapes to build to (the
+`transcribe()` output, the `auth_required` handoff, and the DB logging you must
+close out) are specified in
+[`docs/Integration-Contracts.md`](docs/Integration-Contracts.md).
+
+---
+
+## 🆘 8. Troubleshooting & Rules of Thumb
 - **Never push AI models (.pt, .h5, .bin) to GitHub:** Our `.gitignore` blocks them. Download weights locally and put them in the `models/` folder.
 
 - **Run the main gateway before PR:** Always test your module by running `python system_core/main.py` to ensure it doesn't break the global application state.
+
+- **Gemini returns 404 for a model that used to work:** Google deprecates models for new users. Run `python -m tools.probe_gemini` and update `GEMINI_MODEL`.
+
+- **The dashboard always shows "unknown state":** the hardware module is not returning `"state"` from `get_status`. Check the logs for `CONTRACT VIOLATION`.
+
+- **You created an automation rule but nothing happens:** `main.py` is probably missing `hardware.attach(RuleObserver(...))` or the `poll_sensors()` loop. Rules do not run on their own.
 
 - If a bug holds you up for *more than 48 hours (2 days)*, push your current branch and flag it in the team group chat so we can pair-program and unblock you.
 

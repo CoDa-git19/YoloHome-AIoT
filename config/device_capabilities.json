@@ -1,0 +1,93 @@
+{
+    "default_device_type": "switch",
+  
+    "device_types_by_device": {
+      "light": "switch",
+      "fan": "switch",
+      "pump": "switch",
+      "speaker": "switch",
+      "air_conditioner": "switch",
+  
+      "curtain": "cover",
+  
+      "door": "entry_point",
+      "window": "entry_point",
+      "garage_door": "entry_point"
+    },
+  
+    "actions_by_device_type": {
+      "switch": {
+        "turn_on": {
+          "generic": true,
+          "undo_action": "turn_off",
+          "requires_auth": false,
+          "risk_level": "low"
+        },
+        "turn_off": {
+          "generic": true,
+          "undo_action": "turn_on",
+          "requires_auth": false,
+          "risk_level": "low"
+        },
+        "get_status": {
+          "generic": false,
+          "undo_action": null,
+          "requires_auth": false,
+          "risk_level": "none"
+        }
+      },
+  
+      "cover": {
+        "open": {
+          "generic": true,
+          "undo_action": "close",
+          "requires_auth": false,
+          "risk_level": "low"
+        },
+        "close": {
+          "generic": true,
+          "undo_action": "open",
+          "requires_auth": false,
+          "risk_level": "low"
+        },
+        "get_status": {
+          "generic": false,
+          "undo_action": null,
+          "requires_auth": false,
+          "risk_level": "none"
+        }
+      },
+  
+      "entry_point": {
+        "open": {
+          "generic": true,
+          "undo_action": "close",
+          "requires_auth": true,
+          "risk_level": "high"
+        },
+        "close": {
+          "generic": true,
+          "undo_action": null,
+          "requires_auth": false,
+          "risk_level": "medium"
+        },
+        "get_status": {
+          "generic": false,
+          "undo_action": null,
+          "requires_auth": false,
+          "risk_level": "none"
+        }
+      }
+    },
+  
+    "special_commands": [
+      {
+        "device": "door",
+        "action": "open"
+      },
+      {
+        "device": "door",
+        "action": "close"
+      }
+    ]
+  }
