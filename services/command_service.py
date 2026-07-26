@@ -319,8 +319,31 @@ class CommandService:
             execution_status = "failed"
             error_message = error_message or response_text
 
-        # Lệnh đã xong (hoặc bị chặn) -> hội thoại kết thúc, xoá phiên.
-        if next_step != "clarify":
+        # Vòng đời phiên hội thoại.
+        # clarify -> nhánh phía trên đã set_pending, không đụng vào nữa.
+        #
+        # reject / registry_request KHI ĐANG CÓ pending_command là trường hợp riêng:
+        # user đang TRẢ LỜI câu hỏi làm rõ nhưng đưa giá trị không hợp lệ ("phòng bếp"
+        # không có trong registry). Hội thoại vẫn đang dở - xoá phiên ở đây khiến câu
+        # trả lời ĐÚNG ở lượt sau bị parse cô lập:
+        #
+        #     bật quạt    -> clarify  (pending: fan / turn_on / room=None)
+        #     phòng bếp   -> reject   (phiên bị xoá  <-- LỖI)
+        #     phòng khách -> clarify  ("thiết bị nào?")  <-- đã quên "quạt"
+        #
+        # Giữ lại pending_command GỐC, không phải command đã merge (command chứa
+        # room="phòng bếp" sai). Vẫn gọi set_pending để tăng số lượt, nhờ đó
+        # SESSION_MAX_TURNS vẫn là điểm dừng và không tạo vòng lặp vô tận.
+        RECOVERABLE_STEPS = {"reject", "registry_request"}
+
+        if next_step == "clarify":
+            pass
+        elif next_step in RECOVERABLE_STEPS and pending_command:
+            if self.session_service.has_reached_turn_limit(session_id):
+                self.session_service.clear(session_id)
+            else:
+                self.session_service.set_pending(session_id, pending_command)
+        else:
             self.session_service.clear(session_id)
 
         final_error = error_message if execution_status == "failed" else None
@@ -353,7 +376,7 @@ class CommandService:
             "total_latency_ms": total_latency_ms,
             "session_id": session_id,
             # True -> UI nên chờ user trả lời câu hỏi làm rõ.
-            "awaiting_reply": next_step == "clarify",
+            "awaiting_reply": self.session_service.get_pending(session_id) is not None,
         }
 
     def create_command(self, command_data: dict[str, Any]) -> Command:

@@ -1,0 +1,105 @@
+@startuml Activity_UC04
+' =====================================================================
+' UC-04 - Clarify an incomplete command (session lifecycle)
+' Diem mau chot: phan biet ket cuc TERMINAL vs RECOVERABLE.
+' Export PNG -> diagrams/Activity_UC04.png
+' =====================================================================
+
+skinparam dpi 150
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor   #F7FBFF
+  BorderColor       #2F6FA8
+  DiamondBackgroundColor #FFF8E7
+  DiamondBorderColor     #C9A227
+  FontSize 12
+}
+skinparam note {
+  BackgroundColor #FFFDF0
+  BorderColor #C9B458
+}
+
+start
+:Utterance arrives\nwith a session identifier;
+
+if (pending command exists\nand has not expired?) then (no)
+  :Parse the utterance\nindependently;
+  note right
+    Expiry bound: a pending
+    command is discarded after
+    a fixed interval, so an
+    unrelated utterance an hour
+    later is a new command.
+  end note
+else (yes)
+  if (utterance is itself a complete,\nunambiguous command?) then (yes)
+    :Discard the pending command;
+    :Treat as a new instruction;
+    note right: topic change
+  else (no)
+    :Parse the utterance;
+    :Merge into the pending command\n- absent slots are inherited\n- present slots override;
+    :Re-derive the intent from\nthe completed command;
+    note right
+      Without re-derivation the
+      command keeps intent =
+      clarify even after its
+      slots are filled.
+    end note
+  endif
+endif
+
+:Enforce the authentication policy\non the MERGED command;
+note right
+  Enforcement runs after merging,
+  so a command assembled across
+  turns is evaluated exactly as if
+  spoken in one breath.
+end note
+
+:Validate against the device registry;
+
+if (validation passed?) then (yes)
+  if (all required slots present?) then (yes)
+    :Route to execute / create_rule /\nquery_status;
+    :Clear the session;
+    stop
+  else (no)
+    if (turn limit reached?) then (yes)
+      :Ask the user to restate the\ncommand in full, with an example;
+      :Clear the session;
+      stop
+    else (no)
+      :Store the merged command;
+      :Increment the turn counter;
+      :Ask for the missing slot;
+      stop
+    endif
+  endif
+else (no - value outside the registry)
+  if (a clarification is already\nin progress?) then (yes)
+    :Preserve the ORIGINAL pending
+    command, not the merged one; <<#E8F8EF>>
+    :Increment the turn counter;
+    :Report the invalid value and\noffer the valid options;
+    note right
+      RECOVERABLE.
+      This branch was the defect:
+      the session used to be cleared
+      here, so the next valid answer
+      arrived with no memory of the
+      question.
+    end note
+    stop
+  else (no)
+    :Clear the session; <<#FDECEC>>
+    :Reject;
+    note right
+      TERMINAL.
+      A hostile utterance cannot
+      open a conversation.
+    end note
+    stop
+  endif
+endif
+@enduml

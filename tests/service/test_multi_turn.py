@@ -321,3 +321,18 @@ def test_pending_command_reaches_parse_and_validate():
 
     assert result["next_step"] == "execute"
     assert result["command"]["room"] == "living_room"
+
+def test_reject_giu_pending_khi_dang_clarify():
+    svc = CommandService(use_mock=True)
+    sid = "t1"
+
+    r1 = svc.handle_transcript("bật quạt", session_id=sid)
+    assert r1["next_step"] == "clarify"
+
+    r2 = svc.handle_transcript("phòng bếp", session_id=sid)
+    assert r2["next_step"] in {"reject", "registry_request"}
+    assert svc.session_service.get_pending(sid) is not None   # <- lỗi cũ
+
+    r3 = svc.handle_transcript("phòng khách", session_id=sid)
+    assert r3["next_step"] == "execute"
+    assert r3["command"]["device"] == "fan"                   # nhớ được "quạt"
