@@ -18,6 +18,11 @@ numpy==1.26.4
 # --- Speech Recognition Module ---
 ctranslate2==4.1.0
 soundfile==0.12.1
+torch==2.0.0 
+transformers==4.38.0
+sounddevice 
+soundfile
+librosa
 
 # --- LLM Integration ---
 google-genai
