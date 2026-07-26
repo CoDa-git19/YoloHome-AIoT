@@ -16,12 +16,19 @@ scikit-learn==1.4.1.post1
 numpy==1.26.4
 
 # --- Speech Recognition Module ---
-ctranslate2==4.1.0
+# YÊU CẦU HỆ THỐNG: cần ffmpeg trên PATH (KHÔNG cài được qua pip).
+#   Windows: winget install Gyan.FFmpeg      (hoặc choco install ffmpeg)
+#   Linux  : sudo apt-get install ffmpeg
+#   macOS  : brew install ffmpeg
+# Thiếu ffmpeg thì PhoWhisperSTT.transcribe() trả "" IM LẶNG, không báo lỗi.
 soundfile==0.12.1
-torch==2.0.0 
+torch==2.0.0
 transformers==4.38.0
-sounddevice 
-librosa
+sounddevice==0.5.5
+
+# Chưa dùng tới:
+# ctranslate2==4.1.0   # cho hướng faster-whisper (hiện dùng transformers)
+# librosa              # stt_module đọc audio bằng soundfile + ffmpeg
 
 # --- LLM Integration ---
 # QUAN TRỌNG: pin đúng version đang chạy được trên máy bạn.
