@@ -1,0 +1,69 @@
+@startuml Sequence_UC07
+' Flow 2 / UC-07 - Open the main door with face authentication
+' Ten ham lay dung tu muc "Flow 2" trong 02_SystemArchitecture.tex
+
+skinparam dpi 160
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #333333
+  LifeLineBorderColor #7A4FA3
+  ParticipantBorderColor #7A4FA3
+  ParticipantBackgroundColor #FDF6FF
+}
+
+actor Resident
+participant "CommandService" as CS
+participant "validator"       as V
+participant "AuthService"     as AS
+participant "FaceModule"      as FM
+participant "HardwareModule"  as HM
+database   "SQLite"           as DB
+
+Resident -> CS : handle_transcript("mo cua chinh")
+activate CS
+
+CS -> V : enforce_policy()
+activate V
+V --> CS : face_auth = True\n(FORCED from configuration)
+deactivate V
+
+note right of CS
+  Policy overwrites whatever
+  the model returned.
+end note
+
+CS -> DB : open command_log row\nexecution_status = "waiting_auth"
+CS --> Resident : next_step = "auth_required"
+deactivate CS
+
+... resident presents face to the camera ...
+
+Resident -> AS : authorize_and_execute(result, frame)
+activate AS
+AS -> FM : verify_face(frame)
+activate FM
+FM --> AS : person_name, confidence
+deactivate FM
+
+AS -> AS : authorized =\n(person_name is not None)\nand (confidence >= FACE_AUTH_THRESHOLD)
+
+alt authorized
+    AS -> CS : execute_authorized_command(command)
+    activate CS
+    CS -> HM : execute_command(command)
+    activate HM
+    HM --> CS : servo driven, door open
+    deactivate HM
+    CS -> DB : update_command_result(command_id, ...)
+    deactivate CS
+    AS -> DB : log_face(status = "authorized")
+else denied / no_face / timeout
+    AS -> DB : log_face(status, snapshot_path)
+    note right of AS
+      Door unchanged.
+      The attempt is still recorded.
+    end note
+end
+AS --> Resident : outcome
+deactivate AS
+@enduml

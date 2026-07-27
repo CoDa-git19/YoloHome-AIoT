@@ -65,7 +65,6 @@ data/*
 !data/sample/
 data/sample/*
 !data/sample/.gitkeep
-benchmark/report.md
 
 *.wav
 *.mp3

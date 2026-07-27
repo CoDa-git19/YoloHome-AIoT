@@ -37,10 +37,13 @@ from modules.llm_integration.llm_strategy import GeminiLLMStrategy, MockLLMStrat
 # from services.auth_service import AuthService
 
 from services.command_service import CommandService
-from services.logging_service import log_error, log_face, update_command_result
+from services.logging_service import (
+    LoggingService, log_error, log_face, update_command_result,
+)
+from system_core.observers import (
+    RuleObserver, SensorLoggingObserver, SensorPersistObserver, AdafruitPublisher
+)
 from services.rule_service import RuleService
-
-from system_core.observers import RuleObserver, SensorLoggingObserver
 
 
 SENSOR_POLL_INTERVAL = 2.0
@@ -95,6 +98,18 @@ class MainOrchestrator:
         # Giữ lịch sử cảm biến trong RAM cho dashboard và debug.
         self.sensor_history = SensorLoggingObserver(max_history=100)
         self.hardware_module.attach(self.sensor_history)
+
+        # Ghi sensor_log xuống SQLite. Thiếu dòng này thì bảng sensor_log
+        # rỗng vĩnh viễn và dashboard không có biểu đồ lịch sử.
+        self.hardware_module.attach(SensorPersistObserver(LoggingService()))
+
+        # Đẩy cảm biến lên Adafruit IO. An toàn khi chưa có credential:
+        # publish_to_adafruit() tự bỏ qua nếu _get_aio_client() trả None.
+        if settings.ADAFRUIT_IO_USERNAME and settings.ADAFRUIT_IO_KEY:
+            self.hardware_module.attach(AdafruitPublisher(self.hardware_module))
+            print("[Config] Adafruit IO publishing = ON")
+        else:
+            print("[Config] Adafruit IO publishing = OFF (thiếu credential)")
 
         self.latest_sensor_data: dict[str, Any] = {}
         self._stop_event = threading.Event()
