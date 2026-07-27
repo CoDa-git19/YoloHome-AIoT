@@ -240,6 +240,11 @@ RULE_HYSTERESIS = env_float("RULE_HYSTERESIS", 0.5, minimum=0.0)
 ADAFRUIT_IO_USERNAME = env_str("ADAFRUIT_IO_USERNAME")
 ADAFRUIT_IO_KEY = env_str("ADAFRUIT_IO_KEY")
 
+# "simulation" -> HardwareModule giữ trạng thái trong RAM, KHÔNG nối MQTT.
+# "real"       -> subscribe feed cảm biến của Yolo:Bit và publish lệnh xuống.
+# Mặc định simulation để chạy demo/test trên máy không cắm Yolo:Bit.
+HARDWARE_MODE = env_choice("HARDWARE_MODE", "simulation", {"simulation", "real"})
+
 FLASK_ENV = env_str("FLASK_ENV", "development")
 DATABASE_URL = env_str("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
@@ -254,6 +259,32 @@ FACE_AUTH_THRESHOLD = env_float(
     minimum=0.0,
     maximum=1.0,
 )
+
+# true -> MockFaceRecognizer (luôn nhận ra "member_1", KHÔNG cần camera/model).
+# CHỈ dùng để demo pipeline. Bật ở môi trường thật = ai cũng mở được cửa.
+USE_MOCK_FACE = env_bool("USE_MOCK_FACE", False)
+
+# Bắt chớp mắt trước khi chốt khung hình (chống giơ ảnh in ra trước camera).
+FACE_REQUIRE_BLINK = env_bool("FACE_REQUIRE_BLINK", True)
+
+# Thời gian tối đa chờ tìm thấy khuôn mặt trước khi bỏ cuộc (giây).
+FACE_SCAN_TIMEOUT_SECONDS = env_int("FACE_SCAN_TIMEOUT_SECONDS", 15, minimum=1)
+
+
+# =============================================================================
+# Speech-to-Text
+# =============================================================================
+
+# true -> MockSTTStrategy (trả transcript đặt sẵn, không tải model).
+# Giữ true khi chỉ muốn test luồng text, tránh tải PhoWhisper ~1GB.
+USE_MOCK_STT = env_bool("USE_MOCK_STT", False)
+
+# Model PhoWhisper trên HuggingFace. "base" đủ nhanh trên CPU;
+# đổi sang vinai/PhoWhisper-small nếu cần chính xác hơn và có GPU.
+PHOWHISPER_MODEL = env_str("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+
+# Số giây ghi âm mỗi lượt ở chế độ console giọng nói.
+VOICE_RECORD_SECONDS = env_float("VOICE_RECORD_SECONDS", 4.0, minimum=1.0)
 
 
 # =============================================================================
