@@ -240,6 +240,11 @@ RULE_HYSTERESIS = env_float("RULE_HYSTERESIS", 0.5, minimum=0.0)
 ADAFRUIT_IO_USERNAME = env_str("ADAFRUIT_IO_USERNAME")
 ADAFRUIT_IO_KEY = env_str("ADAFRUIT_IO_KEY")
 
+# "simulation" -> HardwareModule giữ trạng thái trong RAM, KHÔNG nối MQTT.
+# "real"       -> subscribe feed cảm biến của Yolo:Bit và publish lệnh xuống.
+# Mặc định simulation để chạy demo/test trên máy không cắm Yolo:Bit.
+HARDWARE_MODE = env_choice("HARDWARE_MODE", "simulation", {"simulation", "real"})
+
 FLASK_ENV = env_str("FLASK_ENV", "development")
 DATABASE_URL = env_str("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
@@ -255,44 +260,31 @@ FACE_AUTH_THRESHOLD = env_float(
     maximum=1.0,
 )
 
-# Bật/tắt nhánh Face Auth lúc khởi động.
-#
-# MẶC ĐỊNH TẮT là có chủ ý: test suite và CI không bao giờ được mở webcam hay
-# nạp model vài trăm MB. Bật trong .env khi chạy demo thật.
-#
-# TẮT KHÔNG CÓ NGHĨA LÀ BỎ QUA XÁC THỰC. MainOrchestrator vẫn fail closed:
-# thiếu face module thì door.open bị TỪ CHỐI. Cờ này quyết định có NẠP module
-# hay không, không phải có KIỂM TRA hay không.
-ENABLE_FACE_AUTH = env_bool("ENABLE_FACE_AUTH", False)
+# true -> MockFaceRecognizer (luôn nhận ra "member_1", KHÔNG cần camera/model).
+# CHỈ dùng để demo pipeline. Bật ở môi trường thật = ai cũng mở được cửa.
+USE_MOCK_FACE = env_bool("USE_MOCK_FACE", False)
 
-# Chỉ số webcam truyền cho cv2.VideoCapture. Máy có webcam rời, hoặc có phần
-# mềm camera ảo (OBS, Zoom, DroidCam), thường đẩy webcam thật sang index 1-2.
-CAMERA_INDEX = env_int("CAMERA_INDEX", 0, minimum=0)
-
-# Bắt buộc chớp mắt trước khi chấp nhận khung hình (chống ảnh in / video phát
-# trên điện thoại). Chỉ tắt khi phòng quá tối để dò được mắt - và nếu tắt thì
-# PHẢI ghi rõ trong báo cáo, vì nó hạ mức bảo mật thật sự chứ không phải tinh
-# chỉnh giao diện.
+# Bắt chớp mắt trước khi chốt khung hình (chống giơ ảnh in ra trước camera).
 FACE_REQUIRE_BLINK = env_bool("FACE_REQUIRE_BLINK", True)
 
-# Model SVM đã train. Khai báo ở đây để check_config() cảnh báo được khi
-# thiếu file, thay vì để lỗi nổ lúc có người đứng trước camera.
-FACE_MODEL_PATH = MODELS_DIR / "face_model.pkl"
+# Thời gian tối đa chờ tìm thấy khuôn mặt trước khi bỏ cuộc (giây).
+FACE_SCAN_TIMEOUT_SECONDS = env_int("FACE_SCAN_TIMEOUT_SECONDS", 15, minimum=1)
 
 
 # =============================================================================
 # Speech-to-Text
 # =============================================================================
 
-# Cùng lý do với ENABLE_FACE_AUTH: mặc định tắt để test và CI không tải model.
-ENABLE_STT = env_bool("ENABLE_STT", False)
+# true -> MockSTTStrategy (trả transcript đặt sẵn, không tải model).
+# Giữ true khi chỉ muốn test luồng text, tránh tải PhoWhisper ~1GB.
+USE_MOCK_STT = env_bool("USE_MOCK_STT", False)
 
-# Tên model trên HuggingFace, hoặc đường dẫn tới checkpoint đã fine-tune.
-#
-# CỐ Ý dùng đúng tên biến môi trường mà stt_module đã đọc (PHOWHISPER_MODEL).
-# Khai báo tên khác ở đây sẽ tạo hai nguồn sự thật cho cùng một sự việc: đổi
-# một chỗ, chỗ kia âm thầm giữ giá trị cũ.
-STT_MODEL_NAME = env_str("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+# Model PhoWhisper trên HuggingFace. "base" đủ nhanh trên CPU;
+# đổi sang vinai/PhoWhisper-small nếu cần chính xác hơn và có GPU.
+PHOWHISPER_MODEL = env_str("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+
+# Số giây ghi âm mỗi lượt ở chế độ console giọng nói.
+VOICE_RECORD_SECONDS = env_float("VOICE_RECORD_SECONDS", 4.0, minimum=1.0)
 
 
 # =============================================================================
@@ -324,24 +316,6 @@ def check_config() -> list[str]:
         warnings.append(
             f"Không tìm thấy {ENV_PATH}. "
             "Copy .env.example thành .env rồi điền GEMINI_API_KEY."
-        )
-
-    if ENABLE_FACE_AUTH and not FACE_MODEL_PATH.exists():
-        warnings.append(
-            f"ENABLE_FACE_AUTH=true nhưng không tìm thấy {FACE_MODEL_PATH}. "
-            "Face Auth sẽ tự tắt, và mọi lệnh mở cửa sẽ bị từ chối."
-        )
-
-    if ENABLE_FACE_AUTH and not FACE_REQUIRE_BLINK:
-        warnings.append(
-            "FACE_REQUIRE_BLINK=false: một tấm ảnh in cũng qua được xác thực. "
-            "Chỉ dùng khi debug, tuyệt đối không dùng lúc demo."
-        )
-
-    if FACE_AUTH_THRESHOLD < 0.5:
-        warnings.append(
-            f"FACE_AUTH_THRESHOLD={FACE_AUTH_THRESHOLD} là quá thấp cho một "
-            "khoá cửa. Giá trị khuyến nghị: 0.80."
         )
 
     return warnings

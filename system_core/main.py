@@ -24,24 +24,22 @@ Xem docs/Integration-Contracts.md để biết chi tiết 2 contract.
 
 from __future__ import annotations
 
+import argparse
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from config import settings
 
 from modules.hardware_gateway.hardware_module import HardwareModule
 from modules.llm_integration.llm_strategy import GeminiLLMStrategy, MockLLMStrategy
-# from modules.speech_recognition.stt_module import STTModule
-# from modules.face_recognition.face_module import FaceModule
-# from services.auth_service import AuthService
 
 from services.command_service import CommandService
 from services.logging_service import (
     LoggingService, log_error, log_face, update_command_result,
 )
 from system_core.observers import (
-    RuleObserver, SensorLoggingObserver, SensorPersistObserver, AdafruitPublisher
+    RuleObserver, SensorLoggingObserver, SensorPersistObserver,
 )
 from services.rule_service import RuleService
 
@@ -53,27 +51,49 @@ CONSOLE_SESSION_ID = "console"
 class MainOrchestrator:
     """Cổng vào duy nhất của hệ thống."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        use_mock_stt: bool | None = None,
+        use_mock_face: bool | None = None,
+        hardware_mode: str | None = None,
+    ) -> None:
         print("[System] Initializing YoloHome-AIoT Gateway...")
 
         self.use_mock_llm = settings.USE_MOCK_LLM
         self.gemini_model = settings.GEMINI_MODEL
         self.face_threshold = settings.FACE_AUTH_THRESHOLD
 
+        # Cờ CLI (nếu có) thắng .env, để đổi chế độ mà không phải sửa file.
+        self.use_mock_stt = (
+            settings.USE_MOCK_STT if use_mock_stt is None else use_mock_stt
+        )
+        self.use_mock_face = (
+            settings.USE_MOCK_FACE if use_mock_face is None else use_mock_face
+        )
+        self.hardware_mode = hardware_mode or settings.HARDWARE_MODE
+
         print(f"[Config] USE_MOCK_LLM = {self.use_mock_llm}")
         print(f"[Config] FACE_AUTH_THRESHOLD = {self.face_threshold}")
+        print(f"[Config] HARDWARE_MODE = {self.hardware_mode}")
 
         # --- MODULES ---
-        self.hardware_module = HardwareModule()
-        self.stt_engine = None          # Contract A
-        self.face_module = None         # Contract B
-        self.auth_service = None        # Contract B (Ly) - chưa có
-        self.camera = None              # cv2.VideoCapture - orchestrator SỞ HỮU
-        self.liveness_capture = None    # face_module.capture_frame, nếu bật
+        # serial_port rỗng = chế độ mô phỏng (không đụng MQTT). Giá trị chuỗi
+        # chỉ đóng vai trò công tắc: HardwareModule nói chuyện với Yolo:Bit
+        # qua Adafruit IO MQTT chứ không qua cổng Serial.
+        self.hardware_module = HardwareModule(
+            serial_port="mqtt" if self.hardware_mode == "real" else ""
+        )
 
-        # _wire_face_auth() / _wire_stt() KHÔNG gọi ở đây. AuthService cần
-        # command_service, mà nó mãi khối SERVICES bên dưới mới tồn tại.
-        # Xem chú thích ở chỗ gọi thật sự.
+        self.camera: Any = None         # VideoCapture đã mở sẵn (tùy chọn)
+
+        # Hàm lấy khung hình cho Face Auth. Đặt ở đây thay vì gọi thẳng
+        # face_module.capture_frame() để test có thể thay bằng camera giả.
+        self.frame_capturer: Callable[[], Any] | None = None
+
+        self.stt_engine: Any = self._build_stt()     # Contract A
+        self.face_module: Any = self._build_face()   # Contract B
+        self.auth_service: Any = None                # gán sau khi có services
 
         if self.use_mock_llm:
             print("[System] Running LLM in MOCK mode (no API calls).")
@@ -92,12 +112,21 @@ class MainOrchestrator:
             use_mock=self.use_mock_llm,
         )
 
-        # --- MODULE NGOẠI VI ---
-        # PHẢI đứng sau khối SERVICES: _wire_face_auth() dựng AuthService, mà
-        # AuthService nhận command_service qua constructor. Chuyển hai dòng này
-        # lên trên sẽ ném AttributeError ngay lúc boot.
-        self._wire_face_auth()
-        self._wire_stt()
+        # AuthService là điểm thực thi chính sách Face Auth (Contract B).
+        # CHỈ dựng khi có recognizer thật: thiếu nó thì _handle_auth_required
+        # rơi vào nhánh fail-closed và từ chối, thay vì mở cửa cho người lạ.
+        #
+        # Import lazy vì auth_service kéo theo face_module -> cv2 + dlib.
+        # Để ở cấp module thì máy chưa cài 2 thư viện đó sẽ không import nổi
+        # main.py, và toàn bộ test suite gãy ngay từ bước collect.
+        if self.face_module is not None:
+            from services.auth_service import AuthService
+
+            self.auth_service = AuthService(
+                self.command_service,
+                recognizer=self.face_module,
+                threshold=self.face_threshold,
+            )
 
         # --- OBSERVER PATTERN ---
         # BẮT BUỘC. Thiếu dòng này thì automation rule hỏng ÂM THẦM:
@@ -115,13 +144,10 @@ class MainOrchestrator:
         # rỗng vĩnh viễn và dashboard không có biểu đồ lịch sử.
         self.hardware_module.attach(SensorPersistObserver(LoggingService()))
 
-        # Đẩy cảm biến lên Adafruit IO. An toàn khi chưa có credential:
-        # publish_to_adafruit() tự bỏ qua nếu _get_aio_client() trả None.
-        if settings.ADAFRUIT_IO_USERNAME and settings.ADAFRUIT_IO_KEY:
-            self.hardware_module.attach(AdafruitPublisher(self.hardware_module))
-            print("[Config] Adafruit IO publishing = ON")
-        else:
-            print("[Config] Adafruit IO publishing = OFF (thiếu credential)")
+        # KHÔNG có observer nào đẩy cảm biến LÊN Adafruit IO. Yolo:Bit đã
+        # publish 4 feed đó mỗi 10 giây (24/30 data point mỗi phút của gói
+        # free); backend đẩy thêm sẽ vượt hạn mức và khóa cả tài khoản.
+        # Cần bơm dữ liệu giả để demo chay -> python -m tools.seed_adafruit
 
         self.latest_sensor_data: dict[str, Any] = {}
         self._stop_event = threading.Event()
@@ -129,111 +155,75 @@ class MainOrchestrator:
         print("[System] Initialization complete!")
 
     # =========================================================================
-    # Wiring các module tùy chọn
-    #
-    # Cả hai hàm dưới đây FAIL SOFT: thiếu thư viện, thiếu model, thiếu webcam
-    # thì gateway vẫn boot, chỉ tính năng đó tắt và có log rõ ràng. Máy một bạn
-    # chưa cài được dlib không được phép làm sập hệ thống của cả nhóm.
-    #
-    # Mặc định TẮT (ENABLE_FACE_AUTH / ENABLE_STT = false) nên test suite và CI
-    # không bao giờ chạm vào webcam hay tải model.
+    # Lắp ráp module ngoài (Contract A và B)
     # =========================================================================
 
-    def _wire_face_auth(self) -> None:
-        if not settings.ENABLE_FACE_AUTH:
-            print("[Config] Face Auth = OFF (ENABLE_FACE_AUTH=false)")
-            return
+    def _build_stt(self) -> Any:
+        """
+        Dựng engine STT. Trả None nếu không dùng được -> process_voice_command
+        báo lỗi rõ ràng thay vì ném exception.
 
+        Import nằm trong hàm vì stt_module kéo theo torch/transformers rất
+        nặng; chế độ text không nên phải trả cái giá đó.
+        """
         try:
-            import cv2
+            from modules.speech_recognition.stt_module import (
+                MockSTTStrategy, PhoWhisperSTT,
+            )
+        except Exception as exc:
+            print(f"[STT] Cannot import stt_module: {exc}")
+            log_error("stt", f"import failed: {exc}")
+            return None
 
-            # Nạp SẴN dlib ngay lúc boot. face_module cố ý import nặng bên
-            # trong hàm để test chạy offline được; nạp trước ở đây thì lần
-            # nhận diện đầu tiên không bị khựng 1-2 giây giữa lúc demo, và
-            # lỗi thiếu thư viện lộ ra ngay bây giờ thay vì lúc mở cửa.
-            import face_recognition  # noqa: F401
+        if self.use_mock_stt:
+            print("[STT] MOCK mode - canned transcript, no model download.")
+            return MockSTTStrategy()
 
+        print(f"[STT] REAL mode - {settings.PHOWHISPER_MODEL}")
+        # Model tải lazy ở lần transcribe() đầu tiên, không phải ở đây.
+        return PhoWhisperSTT(model_name=settings.PHOWHISPER_MODEL)
+
+    def _build_face(self) -> Any:
+        """
+        Dựng recognizer khuôn mặt. Trả None nếu không dùng được.
+
+        FAIL CLOSED: model hỏng/thiếu thì trả None chứ TUYỆT ĐỐI không tự
+        hạ cấp sang MockFaceRecognizer - mock luôn nhận ra "member_1" nên
+        sẽ mở cửa cho bất kỳ ai. Mock chỉ chạy khi được yêu cầu tường minh.
+        """
+        try:
             from modules.face_recognition.face_module import (
-                SvmFaceRecognizer,
-                capture_frame,
+                MockFaceRecognizer, SvmFaceRecognizer, capture_frame,
             )
+        except Exception as exc:
+            print(f"[FaceID] Cannot import face_module: {exc}")
+            print("         (missing dlib/face_recognition, or the empty"
+                  " face_recognition/ folder at repo root shadows the library)")
+            log_error("face", f"import failed: {exc}")
+            return None
 
-            self.face_module = SvmFaceRecognizer()
-
-            camera = cv2.VideoCapture(settings.CAMERA_INDEX)
-            if not camera.isOpened():
-                camera.release()
-                raise RuntimeError(
-                    f"không mở được camera index={settings.CAMERA_INDEX}"
-                )
-
-            # Contract B: orchestrator là CHỦ SỞ HỮU DUY NHẤT của VideoCapture.
-            # Face module đọc frame từ đối tượng này qua tham số cap, KHÔNG tự
-            # mở camera - hai chỗ cùng giữ webcam thì chỗ thứ hai nhận None và
-            # Face Auth từ chối mọi lệnh mà không rõ nguyên nhân.
-            self.camera = camera
-            self.liveness_capture = capture_frame
-
-            # AuthService dựng TRONG CÙNG try/except với face_module là có chủ
-            # đích. Hai thứ này phải có cùng vòng đời: không bao giờ được rơi
-            # vào trạng thái auth_service tồn tại mà face_module là None, hay
-            # ngược lại. Tách ra hai hàm thì bất biến đó nằm ở hai chỗ và sẽ
-            # lệch nhau lúc nào không biết.
-            from services.auth_service import AuthService
-
-            self.auth_service = AuthService(
-                face_recognizer=self.face_module,
-                command_service=self.command_service,
-            )
-
-            print("[Config] Face Auth = ON (SvmFaceRecognizer + liveness)")
-
-        except (Exception, SystemExit) as exc:
-            # BẮT CẢ SystemExit là có chủ đích.
-            #
-            # Thư viện face_recognition gọi quit() khi thiếu gói model:
-            #     try:
-            #         import face_recognition_models
-            #     except Exception:
-            #         print("Please install `face_recognition_models`...")
-            #         quit()
-            #
-            # quit() ném SystemExit, mà SystemExit kế thừa BaseException chứ
-            # KHÔNG kế thừa Exception. Chỉ bắt Exception thì nó lọt qua, và cả
-            # gateway thoát ngay giữa lúc boot - toàn bộ thiết kế fail soft bị
-            # vô hiệu bởi đúng một lời gọi quit() trong thư viện bên thứ ba.
-            #
-            # KHÔNG dùng `except BaseException`: nó nuốt luôn KeyboardInterrupt
-            # và Ctrl+C sẽ không dừng được chương trình.
-            #
-            # Fail closed toàn phần. Để sót auth_service khác None ở đây nghĩa
-            # là _handle_auth_required() sẽ đi nhánh AuthService với một
-            # face_recognizer hỏng, thay vì nhánh fallback.
-            self.face_module = None
-            self.auth_service = None
-            self.camera = None
-            self.liveness_capture = None
-            log_error("gateway", f"Face Auth wiring failed: {exc}")
-            print(f"[Config] Face Auth = OFF ({exc})")
-
-    def _wire_stt(self) -> None:
-        if not settings.ENABLE_STT:
-            print("[Config] STT = OFF (ENABLE_STT=false)")
-            return
+        if self.use_mock_face:
+            print("[FaceID] MOCK mode - ALWAYS authorizes. Demo only!")
+            return MockFaceRecognizer()
 
         try:
-            from modules.speech_recognition.stt_module import PhoWhisperSTT
+            recognizer = SvmFaceRecognizer()
+        except Exception as exc:
+            print(f"[FaceID] Cannot load models/face_model.pkl: {exc}")
+            print("         Face Auth will DENY every door command.")
+            log_error("face", f"load model failed: {exc}")
+            return None
 
-            self.stt_engine = PhoWhisperSTT(model_name=settings.STT_MODEL_NAME)
-            print(f"[Config] STT = ON ({self.stt_engine.model_name})")
+        # Contract B: orchestrator sở hữu việc lấy khung hình. capture_frame()
+        # tự mở/đóng camera mỗi lần quét nên không giữ webcam khi rảnh.
+        self.frame_capturer = lambda: capture_frame(
+            timeout_seconds=settings.FACE_SCAN_TIMEOUT_SECONDS,
+            require_blink=settings.FACE_REQUIRE_BLINK,
+        )
 
-        except (Exception, SystemExit) as exc:
-            # Cùng lý do với _wire_face_auth(): thư viện bên thứ ba có thể gọi
-            # quit()/sys.exit() lúc import khi thiếu phụ thuộc. Thiếu STT
-            # không được phép làm sập gateway.
-            self.stt_engine = None
-            log_error("gateway", f"STT wiring failed: {exc}")
-            print(f"[Config] STT = OFF ({exc})")
+        print(f"[FaceID] REAL mode - blink={settings.FACE_REQUIRE_BLINK}, "
+              f"timeout={settings.FACE_SCAN_TIMEOUT_SECONDS}s")
+        return recognizer
 
     # =========================================================================
     # Vòng đọc cảm biến
@@ -260,15 +250,6 @@ class MainOrchestrator:
     def stop(self) -> None:
         """Dừng vòng cảm biến (dùng khi thoát chương trình hoặc trong test)."""
         self._stop_event.set()
-
-        # Trả webcam lại cho hệ điều hành. Không release thì trên Windows lần
-        # chạy sau sẽ báo "camera đang được ứng dụng khác sử dụng".
-        if self.camera is not None:
-            try:
-                self.camera.release()
-            except Exception:
-                pass
-            self.camera = None
 
     # =========================================================================
     # Hai đường vào: giọng nói và văn bản
@@ -350,36 +331,32 @@ class MainOrchestrator:
 
     def capture_frame(self):
         """
-        Lấy một khung hình cho Face Auth.
+        Chụp một khung hình cho Face Auth.
 
-        Contract B (đã sửa đổi): VideoCapture thuộc về System owner, nhưng khi
-        bật liveness thì face module cần ĐỌC NHIỀU FRAME từ chính đối tượng đó -
-        chớp mắt không thể phát hiện bằng một khung hình duy nhất. Vì vậy ở đây
-        truyền self.camera xuống thay vì để face module tự mở camera.
+        Contract B ghi rõ việc lấy frame thuộc về System owner, không phải
+        Face owner. Trả None khi không lấy được - AuthService phải coi đó là
+        trường hợp "không có khuôn mặt" và TỪ CHỐI, không phải cho qua.
 
-        Nhánh self.camera.read() bên dưới được giữ lại có chủ đích: khi
-        liveness_capture là None (test suite, hoặc ENABLE_FACE_AUTH=false),
-        hành vi y hệt bản cũ.
+        Hai nguồn khung hình, xét theo thứ tự:
 
-        Trả None khi chưa có camera / không bắt được chớp mắt. AuthService phải
-        coi đó là "không có khuôn mặt" và TỪ CHỐI, không phải cho qua.
+        1. camera - một VideoCapture đã mở sẵn. Chỉ grab đúng 1 frame, không
+           chờ ai xuất hiện. Dùng cho test và ngữ cảnh headless.
+        2. frame_capturer - scanner của face module: mở cửa sổ, chờ tới khi
+           thấy mặt (kèm chớp mắt nếu bật), rồi trả khung hình sạch.
+
+        Cả hai cùng None -> None -> từ chối. Đúng nguyên tắc fail closed.
         """
-        if self.camera is None:
+        source = self.camera or self.frame_capturer
+        if source is None:
             return None
 
-        if self.liveness_capture is not None:
-            try:
-                return self.liveness_capture(
-                    cap=self.camera,
-                    require_blink=settings.FACE_REQUIRE_BLINK,
-                )
-            except Exception as exc:
-                log_error("gateway", f"liveness capture failed: {exc}")
-                return None
-
         try:
-            ok, frame = self.camera.read()
-            return frame if ok else None
+            if self.camera is not None:
+                ok, frame = self.camera.read()
+                return frame if ok else None
+
+            # capture_frame() trả None khi hết timeout mà không thấy ai.
+            return self.frame_capturer()
         except Exception as exc:
             log_error("gateway", f"capture_frame failed: {exc}")
             return None
@@ -568,11 +545,86 @@ class MainOrchestrator:
 
 
 # =============================================================================
-# Console tạm thời (dùng khi STT và dashboard chưa sẵn sàng)
+# Console
 # =============================================================================
 
-def main() -> None:
-    orchestrator = MainOrchestrator()
+def _record_audio(seconds: float) -> bytes | None:
+    """
+    Ghi âm từ micro mặc định. Trả None nếu thiếu sounddevice hoặc không có
+    thiết bị thu - console phải báo lỗi rõ chứ không được sập.
+    """
+    try:
+        from modules.speech_recognition.stt_module import record_wav_bytes
+    except Exception as exc:
+        print(f"[Mic] Cannot import recorder: {exc}")
+        return None
+
+    try:
+        return record_wav_bytes(duration=seconds)
+    except Exception as exc:
+        print(f"[Mic] Recording failed: {exc}")
+        log_error("stt", f"record failed: {exc}")
+        return None
+
+
+def _voice_turn(orchestrator: MainOrchestrator, seconds: float) -> None:
+    """Một lượt hội thoại bằng giọng nói: ghi âm -> STT -> pipeline."""
+    input(f">> Press Enter to speak ({seconds:g}s): ")
+
+    audio = _record_audio(seconds)
+    if not audio:
+        return
+
+    response = orchestrator.process_voice_command(
+        audio,
+        session_id=CONSOLE_SESSION_ID,
+    )
+    print(f"[Bot]: {response}\n")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m system_core.main",
+        description="YoloHome-AIoT gateway console.",
+    )
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        help="Voice console: record from mic each turn instead of typing.",
+    )
+    parser.add_argument(
+        "--mock-stt",
+        action="store_true",
+        help="Use MockSTTStrategy (skip the PhoWhisper download).",
+    )
+    parser.add_argument(
+        "--mock-face",
+        action="store_true",
+        help="Use MockFaceRecognizer - ALWAYS authorizes. Demo only.",
+    )
+    parser.add_argument(
+        "--real-hw",
+        action="store_true",
+        help="Talk to Yolo:Bit over Adafruit IO MQTT (default: simulation).",
+    )
+    parser.add_argument(
+        "--seconds",
+        type=float,
+        default=settings.VOICE_RECORD_SECONDS,
+        help="Recording length per voice turn.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_arg_parser().parse_args(argv)
+
+    orchestrator = MainOrchestrator(
+        # Chế độ text không cần STT -> mặc định dùng mock để khỏi tải model.
+        use_mock_stt=True if (args.mock_stt or not args.voice) else False,
+        use_mock_face=True if args.mock_face else None,
+        hardware_mode="real" if args.real_hw else None,
+    )
 
     sensor_thread = threading.Thread(
         target=orchestrator.start_sensor_loop,
@@ -582,20 +634,34 @@ def main() -> None:
 
     time.sleep(1)
 
-    print("\n--- CONSOLE CHAT (tạm thời, STT chưa sẵn sàng) ---")
-    print("Gõ câu lệnh tiếng Việt, ví dụ: bật đèn phòng khách")
-    print("Gõ 'exit' để thoát.\n")
+    if args.voice:
+        print("\n--- VOICE CONSOLE ---")
+        print("Press Enter, then speak. Example: bat den phong khach")
+    else:
+        print("\n--- TEXT CONSOLE ---")
+        print("Type a Vietnamese command. Example: bat den phong khach")
+        print("Type 'voice' to speak a single turn.")
+    print("Type 'exit' to quit.\n")
 
     try:
         while True:
+            if args.voice:
+                _voice_turn(orchestrator, args.seconds)
+                continue
+
             try:
-                user_input = input("Nhập lệnh: ")
+                user_input = input("Command: ")
             except EOFError:
                 break
 
-            if user_input.strip().lower() in {"exit", "quit"}:
+            command = user_input.strip().lower()
+            if command in {"exit", "quit"}:
                 break
             if not user_input.strip():
+                continue
+
+            if command == "voice":
+                _voice_turn(orchestrator, args.seconds)
                 continue
 
             # Dùng chung session_id -> multi-turn hoạt động:

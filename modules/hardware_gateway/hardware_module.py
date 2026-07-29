@@ -261,13 +261,14 @@ class HardwareModule(Subject):
 
     def publish_to_adafruit(self, data: dict) -> None:
         """
-        Đẩy dữ liệu cảm biến lên Adafruit IO.
+        Đẩy dữ liệu cảm biến lên Adafruit IO. CHỈ dùng thủ công.
 
-        KHÔNG gọi trực tiếp từ vòng cảm biến. Dùng AdafruitPublisher trong
-        system_core/observers.py, vì nó có giới hạn tần suất. Gói free chỉ
-        cho 30 data point/phút TÍNH GỘP mọi feed, mà mỗi lần gọi hàm này
-        gửi 1 request cho MỖI cảm biến.
-        Nguồn: https://io.adafruit.com/api/docs/
+        ĐỪNG nối hàm này vào observer nào. Gói free cho 30 data point/phút
+        TÍNH GỘP mọi feed (https://io.adafruit.com/api/docs/), mà Yolo:Bit
+        đã publish 4 feed sensor mỗi 10 giây -> 24 data point/phút. Hơn nữa
+        4 feed hàm này ghi vào chính là 4 feed Yolo:Bit sở hữu và backend
+        đang subscribe -> chỉ vọng lại dữ liệu vừa đọc.
+        Lưu lịch sử cảm biến bằng SensorPersistObserver (ghi SQLite).
         """
         aio = self._get_aio_client()
         if aio is None:

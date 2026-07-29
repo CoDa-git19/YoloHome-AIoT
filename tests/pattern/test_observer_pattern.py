@@ -29,14 +29,13 @@ from database.init_db import init_db
 from services.command_service import CommandService, MockHardwareModule
 from services.rule_service import RuleService
 from system_core.observers import (
-    AdafruitPublisher,
     Observer,
     RuleObserver,
     SensorLoggingObserver,
     Subject,
 )
 from modules.hardware_gateway.hardware_module import HardwareModule
-from system_core.observers import ADAFRUIT_MIN_PUBLISH_INTERVAL
+
 
 def quiet(func, *args, **kwargs):
     with contextlib.redirect_stdout(io.StringIO()):
@@ -56,10 +55,10 @@ class SpyObserver(Observer):
 
 
 class BrokenObserver(Observer):
-    """Mô phỏng Adafruit IO sập."""
+    """Mô phỏng một observer phụ bị hỏng (DB khoá, mất mạng...)."""
 
     def update(self, sensor_data: dict[str, Any]) -> None:
-        raise RuntimeError("Adafruit IO không phản hồi")
+        raise RuntimeError("observer phụ không phản hồi")
 
 
 class SensorSource(Subject):
@@ -294,25 +293,7 @@ def test_sensor_logging_observer_copies_data():
 
 
 # =============================================================================
-# 5. AdafruitPublisher
-# =============================================================================
-
-def test_adafruit_publisher_forwards_to_hardware():
-    class FakeHardware:
-        def __init__(self):
-            self.published = []
-
-        def publish_to_adafruit(self, data):
-            self.published.append(data)
-
-    hardware = FakeHardware()
-    AdafruitPublisher(hardware).update({"temperature": 30})
-
-    assert hardware.published == [{"temperature": 30}]
-
-
-# =============================================================================
-# 6. End-to-end: cảm biến -> rule -> phần cứng
+# 5. End-to-end: cảm biến -> rule -> phần cứng
 # =============================================================================
 
 @pytest.fixture
@@ -401,76 +382,15 @@ def test_multiple_observers_run_on_each_poll(wired):
     assert len(logging_observer.history) == 2
 
 # =============================================================================
-# AdafruitPublisher - giới hạn tần suất
+# 6. Cô lập lỗi + khóa quyết định "không đẩy ngược lên Adafruit"
 # =============================================================================
 
-class RecordingHardwareGateway:
-    """Ghi lại mọi lần publish_to_adafruit được gọi."""
-
-    def __init__(self) -> None:
-        self.published: list[dict[str, Any]] = []
-
-    def publish_to_adafruit(self, data: dict[str, Any]) -> None:
-        self.published.append(dict(data))
-
-
-class FailingGateway:
-    """Mô phỏng Adafruit IO sập / mất mạng."""
-
-    def publish_to_adafruit(self, data: dict[str, Any]) -> None:
-        raise RuntimeError("Adafruit IO không phản hồi")
-
-
-def test_adafruit_publishes_immediately_on_first_reading():
-    """Lần đầu phải đẩy ngay, không bắt dashboard chờ hết min_interval."""
-    gateway = RecordingHardwareGateway()
-    publisher = AdafruitPublisher(gateway, min_interval=15.0)
-
-    publisher.update({"temperature": 28.5})
-
-    assert len(gateway.published) == 1
-    assert publisher.publish_count == 1
-
-
-def test_adafruit_throttles_rapid_updates():
+def test_broken_observer_does_not_stop_rule_engine():
     """
-    Vòng cảm biến chạy 2 giây/lần, nhưng gói free Adafruit IO chỉ cho khoảng
-    30 data point/phút. Mỗi lần publish gửi 1 request cho MỖI cảm biến, nên
-    đẩy theo đúng nhịp cảm biến sẽ vượt giới hạn gấp 4 lần và bị chặn.
-    """
-    gateway = RecordingHardwareGateway()
-    publisher = AdafruitPublisher(gateway, min_interval=15.0)
+    Một observer phụ chết KHÔNG được làm chết automation rule.
 
-    # 30 vòng cảm biến liên tiếp (tương đương 1 phút chạy thật).
-    for _ in range(30):
-        publisher.update({"temperature": 28.5})
-
-    assert len(gateway.published) == 1, (
-        f"Đẩy {len(gateway.published)} lần trong 1 phút - sẽ bị rate limit."
-    )
-    assert publisher.skipped_count == 29
-
-
-def test_adafruit_publishes_again_after_interval():
-    """Hết min_interval thì được đẩy tiếp, không phải chặn vĩnh viễn."""
-    gateway = RecordingHardwareGateway()
-
-    # min_interval = 0 -> mọi lần update đều qua cửa.
-    publisher = AdafruitPublisher(gateway, min_interval=0.0)
-
-    publisher.update({"temperature": 28.5})
-    publisher.update({"temperature": 29.0})
-    publisher.update({"temperature": 29.5})
-
-    assert len(gateway.published) == 3
-
-
-def test_adafruit_failure_does_not_stop_rule_engine():
-    """
-    Mất mạng KHÔNG được làm chết automation rule.
-
-    Nếu notify() không cô lập lỗi, Adafruit sập sẽ kéo theo RuleObserver
-    không chạy - và cái quạt không bao giờ tự bật dù trời nóng.
+    Nếu notify() không cô lập lỗi thì mất mạng / DB khoá sẽ kéo theo
+    RuleObserver không chạy - cái quạt không bao giờ tự bật dù trời nóng.
     """
     source = SensorSource()
     engine = StubRuleEngine(
@@ -486,31 +406,34 @@ def test_adafruit_failure_does_not_stop_rule_engine():
     )
     executor = RecordingExecutor()
 
-    source.attach(AdafruitPublisher(FailingGateway(), min_interval=0.0))
+    source.attach(BrokenObserver())
     source.attach(RuleObserver(engine, executor))
 
     errors = source.notify({"temperature": 32.0})
 
-    assert len(errors) == 1, "Lỗi Adafruit phải được ghi nhận."
-    assert len(executor.commands) == 1, "Rule engine đã chết theo Adafruit!"
+    assert len(errors) == 1, "Lỗi của observer phụ phải được ghi nhận."
+    assert len(executor.commands) == 1, "Rule engine đã chết theo observer phụ!"
 
 
-def test_adafruit_default_interval_respects_free_tier():
+def test_no_observer_publishes_back_to_adafruit():
     """
-    Khóa lại giá trị mặc định.
-
-    read_sensors() trả 4 khóa. Với gói free ~30 data point/phút:
-        4 khóa x (60 / min_interval) <= 30   ->   min_interval >= 8.0
+    Yolo:Bit đã publish 4 feed sensor mỗi 10 giây -> 24/30 data point/phút.
+    Backend đẩy thêm là vượt hạn mức -> 429 khóa TOÀN TÀI KHOẢN, chặn luôn
+    dữ liệu thật của Yolo:Bit. Demo chay thì gọi tay tools/seed_adafruit.py.
     """
-    sensors_per_publish = 4
-    free_tier_limit_per_minute = 30
+    import system_core.observers as observers_module
 
-    publishes_per_minute = 60 / ADAFRUIT_MIN_PUBLISH_INTERVAL
-    data_points_per_minute = publishes_per_minute * sensors_per_publish
-
-    assert data_points_per_minute <= free_tier_limit_per_minute, (
-        f"{data_points_per_minute} data point/phút vượt giới hạn gói free."
+    assert not hasattr(observers_module, "AdafruitPublisher"), (
+        "AdafruitPublisher đã quay lại - sẽ vượt hạn mức Adafruit IO."
     )
+
+    hardware = HardwareModule()
+    published: list[dict[str, Any]] = []
+    hardware.publish_to_adafruit = lambda data: published.append(dict(data))
+
+    quiet(hardware.poll_sensors)
+
+    assert published == [], "Có observer đang đẩy cảm biến ngược lên Adafruit."
 
 
 # =============================================================================
