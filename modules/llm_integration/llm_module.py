@@ -270,6 +270,7 @@ def alias_section(name: str) -> dict[str, Any]:
 
 ACTION_ALIASES = alias_section("actions")
 ROOM_ALIASES = alias_section("rooms")
+CONFIRMATION_ALIASES = alias_section("confirmations")
 DEVICE_ALIASES = alias_section("devices")
 DISPLAY_NAMES = alias_section("display_names")
 CONDITION_ALIASES = alias_section("conditions")
@@ -336,6 +337,17 @@ def room_display_name(room: str | None) -> str:
     return DISPLAY_NAMES.get("rooms", {}).get(room, "phòng")
 
 
+def action_display_name(action: str | None) -> str:
+    """
+    Động từ tiếng Việt cho một action ("turn_on" -> "bật").
+
+    Trả "" cho action lạ, để người gọi lùi về câu trả lời chung thay vì ghép
+    ra một câu sai ngữ pháp. Từ điển nằm trong config/language_aliases.json
+    -> display_names.actions, nên thêm action mới không phải sửa code.
+    """
+    return DISPLAY_NAMES.get("actions", {}).get(action, "")
+
+
 def state_display_name(state: str | None) -> str:
     """
     Đổi trạng thái phần cứng ("on"/"off"/"open"/"closed") sang tiếng Việt.
@@ -349,6 +361,31 @@ def state_display_name(state: str | None) -> str:
     return STATE_NAMES.get(state, STATE_NAMES.get("unknown", "không xác định"))
 
 
+def device_in_room_text(
+    device: str | None,
+    room: str | None,
+    joiner: str = " ",
+) -> str:
+    """
+    Ghép tên thiết bị với tên phòng: "đèn phòng khách", "đèn ở phòng khách".
+
+    Thiết bị và phòng có thể TRÙNG hoặc LỒNG tên nhau - devices.door và
+    rooms.main_door cùng hiển thị "cửa chính" - nên ghép thẳng sẽ ra
+    "cửa chính ở cửa chính". Trùng hoặc lồng thì giữ tên dài hơn vì nó mang
+    nhiều thông tin hơn.
+    """
+    device_name = device_display_name(device)
+    room_name = room_display_name(room) if room else ""
+
+    if not room_name:
+        return device_name
+
+    if room_name in device_name or device_name in room_name:
+        return max(device_name, room_name, key=len)
+
+    return f"{device_name}{joiner}{room_name}"
+
+
 def supported_room_text(device_registry: dict[str, dict[str, list[str]]]) -> str:
     names = [room_display_name(room) for room in sorted(device_registry.keys())]
     return ", ".join(names)
@@ -360,6 +397,35 @@ def supported_device_text(device_registry: dict[str, dict[str, list[str]]]) -> s
         for device in sorted(registry_devices(device_registry))
     ]
     return ", ".join(names)
+
+
+def rooms_for_device_text(
+    device: str,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> str:
+    """
+    Tên hiển thị của những phòng THẬT SỰ CÓ thiết bị này.
+
+    Khác supported_room_text() ở chỗ có lọc. Gợi ý toàn bộ danh sách phòng khi
+    người dùng đang hỏi về đèn sẽ dẫn họ tới "cửa chính" - nơi không có đèn -
+    rồi từ chối chính gợi ý mình vừa đưa ra.
+    """
+    rooms = sorted(rooms_for_device(device, device_registry))
+    return ", ".join(room_display_name(room) for room in rooms)
+
+
+def devices_for_room_text(
+    room: str,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> str:
+    """
+    Tên hiển thị của những thiết bị THẬT SỰ CÓ trong phòng này.
+
+    Chiều đối xứng của rooms_for_device_text(): đang hỏi thiết bị nào ở cửa
+    chính thì không được liệt kê đèn và quạt.
+    """
+    devices = sorted(device_registry.get(room, {}).keys())
+    return ", ".join(device_display_name(device) for device in devices)
 
 # Prompt building (Gemini)
 
@@ -514,7 +580,22 @@ def detect_room(
     device_registry: dict[str, dict[str, list[str]]],
 ) -> str | None:
     """Detect a supported room from transcript based on device_registry."""
+    room, _matched = detect_room_with_alias(text, device_registry)
+    return room
+
+
+def detect_room_with_alias(
+    text: str,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> tuple[str | None, str | None]:
+    """
+    Như detect_room() nhưng trả kèm CHÍNH CHUỖI đã khớp.
+
+    Cần chuỗi đó để cắt khỏi câu trước khi dò thiết bị - xem
+    detect_device_excluding_room().
+    """
     best_room: str | None = None
+    best_alias: str | None = None
     best_len = 0
 
     for room_key in registry_rooms(device_registry):
@@ -523,9 +604,42 @@ def detect_room(
 
         if match is not None and len(match) > best_len:
             best_room = room_key
+            best_alias = match
             best_len = len(match)
 
-    return best_room
+    return best_room, best_alias
+
+
+def detect_device_excluding_room(
+    text: str,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> str | None:
+    """
+    Dò thiết bị SAU KHI đã cắt phần chữ mô tả phòng ra khỏi câu.
+
+    VÌ SAO CẦN
+    ----------
+    Tên phòng và tên thiết bị có thể trùng chuỗi. "cửa chính" vừa là phòng
+    main_door vừa là alias của thiết bị door. Longest-match khiến:
+
+        "bật đèn cửa chính"  ->  device='door', action='open'
+
+    Chữ "đèn" bị nuốt, và một câu về đèn biến thành lệnh MỞ CỬA - hành động
+    nhạy cảm duy nhất của hệ thống. Cắt phần tên phòng ra trước thì phần còn
+    lại ("bật đèn") mới nói đúng về thiết bị.
+
+    Cắt xong mà không còn thiết bị nào ("mở cửa chính" -> còn "mở") thì quay
+    lại dò trên câu đầy đủ, vì khi đó tên phòng CHÍNH LÀ tên thiết bị.
+    """
+    _room, alias = detect_room_with_alias(text, device_registry)
+
+    if alias:
+        remainder = text.replace(alias, " ")
+        device = detect_device(remainder, device_registry)
+        if device is not None:
+            return device
+
+    return detect_device(text, device_registry)
 
 
 def resolve_room(
@@ -750,12 +864,32 @@ def make_clarify_command(
     }
 
 
-def make_registry_request_command(response: str) -> dict[str, Any]:
+def make_registry_request_command(
+    response: str,
+    action: str | None = None,
+    device: str | None = None,
+    room: str | None = None,
+) -> dict[str, Any]:
+    """
+    Yêu cầu đăng ký phòng/thiết bị mới.
+
+    action/device/room được GIỮ LẠI có chủ đích. Trước đây cả ba đều None, nên
+    command_log chỉ còn mỗi chuỗi transcript thô - quản trị viên đọc bảng không
+    biết phải đăng ký cái gì. Đây là ca quan sát được trong dữ liệu thật:
+
+        (1902, 'nhà bếp', 'registry_request', 'waiting_admin_review')
+
+    Không có device, không có room. Một yêu cầu rỗng ruột.
+
+    Không ảnh hưởng an toàn: validator cho registry_request đi qua mà không
+    chạm phần cứng (intent này không nằm trong POLICY_INTENTS), và
+    CommandService cũng chỉ ghi log rồi trả lời.
+    """
     return {
         "intent": "registry_request",
-        "action": None,
-        "device": None,
-        "room": None,
+        "action": action,
+        "device": device,
+        "room": room,
         "face_auth": False,
         "condition": None,
         "response": response,
@@ -786,22 +920,247 @@ def missing_slot_question(
     device = command.get("device")
     room = command.get("room")
 
+    # Dùng lại động từ người dùng đã nói ("bật đèn ở phòng nào?" thay vì
+    # "điều khiển đèn ở phòng nào?"). Action lạ hoặc chưa rõ -> "điều khiển".
+    verb = action_display_name(command.get("action")) or "điều khiển"
+
+    # NGUYÊN TẮC: chỉ gợi ý những lựa chọn CHẮC CHẮN TỒN TẠI trong registry.
+    # Gợi ý một phòng không có thiết bị đó là tự dựng bẫy: người dùng nghe
+    # theo, rồi bị chính hệ thống từ chối ở lượt sau.
     if device is None:
+        if room:
+            options = devices_for_room_text(room, device_registry)
+            if options:
+                return (
+                    f"Bạn muốn {verb} thiết bị nào ở "
+                    f"{room_display_name(room)}? Hiện có: {options}."
+                )
+
         return (
-            "Bạn muốn điều khiển thiết bị nào? "
+            f"Bạn muốn {verb} thiết bị nào? "
             f"Hiện hệ thống hỗ trợ: {supported_device_text(device_registry)}."
         )
 
     if room is None:
+        options = rooms_for_device_text(device, device_registry)
+        if options:
+            return (
+                f"Bạn muốn {verb} {device_display_name(device)} ở phòng nào? "
+                f"Hiện có {device_display_name(device)} ở: {options}."
+            )
+
+        # Thiết bị hợp lệ nhưng chưa phòng nào lắp. Không được trả danh sách
+        # rỗng ("Hiện có: .") - đó là câu hỏi không trả lời được.
         return (
-            f"Bạn muốn điều khiển {device_display_name(device)} ở phòng nào? "
-            f"Hiện hệ thống hỗ trợ: {supported_room_text(device_registry)}."
+            f"Hiện chưa phòng nào có {device_display_name(device)}. "
+            f"Hệ thống đang hỗ trợ: {supported_device_text(device_registry)}."
         )
 
     return (
         "Bạn muốn thực hiện hành động nào với "
-        f"{device_display_name(device)} ở {room_display_name(room)}?"
+        f"{device_in_room_text(device, room, joiner=' ở ')}?"
     )
+
+
+def detect_confirmation(text: str) -> str | None:
+    """
+    Câu này có phải là một lời ĐỒNG Ý hoặc TỪ CHỐI thuần tuý không?
+
+    Trả "yes", "no", hoặc None.
+
+    VÌ SAO QUYẾT ĐỊNH NÀY KHÔNG ĐI QUA LLM
+    --------------------------------------
+    Dữ liệu thật từ command_log cho thấy cùng một chữ "có" ra ba kết quả khác
+    nhau:
+
+        (1893, 'có', 'registry_request', 'waiting_admin_review')
+        (1903, 'có', 'clarify',          'success')
+        (1905, 'có', 'clarify',          'success')
+
+    Một câu trả lời Yes/No là dữ liệu có cấu trúc, không phải ngôn ngữ cần
+    diễn giải. Đối chiếu từ khoá phía server thì kết quả tất định, không tốn
+    quota, và không có chỗ cho model bịa thêm slot.
+
+    KHỚP TOÀN CÂU, KHÔNG PHẢI KHỚP CHUỖI CON
+    ----------------------------------------
+    "có" là từ rất phổ biến trong tiếng Việt: "nếu CÓ người thì bật đèn" là
+    một luật tự động hoá, không phải lời đồng ý. Vì vậy chỉ nhận khi TOÀN BỘ
+    câu (sau khi bỏ dấu câu) đúng bằng một từ khoá.
+    """
+    cleaned = (text or "").strip().lower()
+
+    for ch in ".,!?;:\u2026":
+        cleaned = cleaned.replace(ch, " ")
+    cleaned = " ".join(cleaned.split())
+
+    if not cleaned:
+        return None
+
+    for answer in ("yes", "no"):
+        if cleaned in alias_list(CONFIRMATION_ALIASES, answer, []):
+            return answer
+
+    return None
+
+
+def detect_unsupported_room(
+    text: str,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> str | None:
+    """
+    Người dùng có nhắc tới một phòng CÓ TÊN HỢP LỆ nhưng registry chưa có không?
+
+    language_aliases.json biết 6 phòng; device_registry chỉ có 3. Chênh lệch đó
+    là CỐ Ý: alias để NHẬN RA tên phòng, registry để QUYẾT ĐỊNH phòng nào được
+    hỗ trợ. Hàm này khai thác đúng khoảng chênh đó.
+
+    Trả về khoá phòng (ví dụ "kitchen"), hoặc None.
+    """
+    lowered = (text or "").lower()
+
+    best_key: str | None = None
+    best_len = 0
+
+    for room_key in ROOM_ALIASES:
+        if room_key in device_registry:
+            continue
+
+        aliases = alias_list(ROOM_ALIASES, room_key, [room_key])
+        match = best_alias_match(lowered, aliases)
+
+        if match is not None and len(match) > best_len:
+            best_key = room_key
+            best_len = len(match)
+
+    return best_key
+
+
+def unsupported_room_response(
+    room_key: str,
+    device: str | None,
+    device_registry: dict[str, dict[str, list[str]]],
+    action: str | None = None,
+) -> str:
+    """
+    Câu trả lời khi người dùng nhắc tới phòng chưa đăng ký.
+
+    Hai vế, có chủ đích:
+    - Vế hỏi: mở đường cho luồng xác nhận (người dùng trả lời "có").
+    - Vế gợi ý: mở đường đi tiếp NGAY, để hội thoại không thành ngõ cụt kể cả
+      khi người dùng không muốn đăng ký gì.
+
+    Danh sách gợi ý lấy từ device_registry nên không bao giờ đề xuất một phòng
+    không tồn tại.
+    """
+    name = DISPLAY_NAMES.get("rooms", {}).get(room_key, room_key)
+    verb = action_display_name(action) or "điều khiển"
+
+    head = (
+        f"Hệ thống chưa có {name}. "
+        "Bạn có muốn gửi yêu cầu thêm phòng này không?"
+    )
+
+    if device:
+        options = rooms_for_device_text(device, device_registry)
+        if options:
+            return (
+                f"{head} Hoặc chọn {options} "
+                f"để {verb} {device_display_name(device)} ngay."
+            )
+
+    return f"{head} Các phòng hiện có: {supported_room_text(device_registry)}."
+
+
+def failure_response(
+    command: dict[str, Any],
+    validation: dict[str, Any],
+    device_registry: dict[str, dict[str, list[str]]] | None = None,
+) -> str:
+    """
+    Câu trả lời cho người dùng khi lệnh KHÔNG chạy được.
+
+    VÌ SAO CẦN HÀM RIÊNG
+    --------------------
+    Trường command["response"] do LLM sinh ra TRƯỚC khi server validate, nên
+    nó luôn mang giọng thành công: "Đã bật đèn ở cửa chính." Dùng lại câu đó
+    ở nhánh thất bại nghĩa là hệ thống KHẲNG ĐỊNH đã làm một việc chưa hề xảy
+    ra - hỏng âm thầm theo chiều ngược lại, và người dùng không có cách nào
+    biết. Trong log thì execution_status="failed", còn người dùng nghe
+    "đã bật".
+
+    Câu ở đây do SERVER soạn, từ mã lỗi của validator và device_registry - nên
+    nó vừa trung thực vừa chỉ gợi ý những lựa chọn chắc chắn tồn tại.
+    """
+    if device_registry is None:
+        device_registry = load_device_registry()
+
+    code = validation.get("code")
+    device = command.get("device")
+    room = command.get("room")
+    action = command.get("action")
+
+    device_name = device_display_name(device)
+    room_key_known = room in device_registry
+    room_name = DISPLAY_NAMES.get("rooms", {}).get(room)
+
+    if code == "unknown_room":
+        head = (
+            f"Hệ thống chưa có {room_name}."
+            if room_name
+            else "Hệ thống không nhận ra phòng bạn vừa nói."
+        )
+        if device:
+            options = rooms_for_device_text(device, device_registry)
+            if options:
+                return f"{head} Hiện có {device_name} ở: {options}."
+        return f"{head} Các phòng hiện có: {supported_room_text(device_registry)}."
+
+    if code == "unknown_device":
+        # Ca hay gặp nhất: ghép nhầm phòng với thiết bị, ví dụ đèn ở cửa chính.
+        head = f"{room_display_name(room).capitalize()} không có {device_name}."
+
+        options = rooms_for_device_text(device, device_registry) if device else ""
+        if options:
+            return f"{head} {device_name.capitalize()} hiện có ở: {options}."
+
+        available = devices_for_room_text(room, device_registry) if room_key_known else ""
+        if available:
+            return f"{head} Ở đây hiện có: {available}."
+
+        return head
+
+    if code == "unsupported_action":
+        allowed = device_registry.get(room, {}).get(device, []) if room_key_known else []
+        verbs = [action_display_name(a) for a in allowed if action_display_name(a)]
+        subject = device_in_room_text(device, room, joiner=" ở ")
+        head = f"{subject.capitalize()} không làm được việc đó."
+        if verbs:
+            return f"{head} Hiện có thể: {', '.join(verbs)}."
+        return head
+
+    if code == "invalid_condition":
+        return (
+            "Điều kiện của quy tắc chưa hợp lệ. "
+            f"Cảm biến hỗ trợ: {', '.join(sorted(load_schema().get('valid_sensors', [])))}."
+        )
+
+    if code in {"llm_timeout", "llm_api_error", "llm_unavailable", "llm_rate_limited"}:
+        return "Hệ thống đang bận. Bạn thử lại sau ít giây giúp mình nhé."
+
+    if code in {"missing_field", "invalid_intent", "llm_parse_error"}:
+        return "Mình chưa hiểu rõ yêu cầu. Bạn nói lại đầy đủ hơn giúp mình nhé."
+
+    if code == "safety_rule_violation":
+        return "Yêu cầu này không được phép vì lý do an toàn."
+
+    # Mặc định: TUYỆT ĐỐI không mang giọng thành công.
+    if device and room:
+        return (
+            "Chưa thực hiện được lệnh với "
+            f"{device_in_room_text(device, room, joiner=' ở ')}."
+        )
+
+    return "Chưa thực hiện được yêu cầu này."
 
 
 def validate_mock_slots(
@@ -831,35 +1190,17 @@ def validate_mock_slots(
             "Bạn có muốn gửi yêu cầu thêm phòng này vào device_registry không?"
         )
 
-    if device is None:
+    if device is None or room is None or action is None:
+        # Ủy quyền cho missing_slot_question() thay vì chép lại câu hỏi.
+        # Trước đây hai chỗ này giữ hai bản sao của cùng một câu chữ, nên sửa
+        # một chỗ là chỗ kia lệch ngay - và đường mock với đường Gemini trả lời
+        # khác nhau cho cùng một tình huống.
         return make_clarify_command(
-            response=(
-                "Bạn muốn điều khiển thiết bị nào? "
-                f"Hiện hệ thống hỗ trợ: {supported_device_text(device_registry)}."
+            response=missing_slot_question(
+                {"device": device, "room": room, "action": action},
+                device_registry,
             ),
             action=action,
-            device=None,
-            room=room,
-        )
-
-    if room is None:
-        return make_clarify_command(
-            response=(
-                f"Bạn muốn điều khiển {device_display_name(device)} ở phòng nào? "
-                f"Hiện hệ thống hỗ trợ: {supported_room_text(device_registry)}."
-            ),
-            action=action,
-            device=device,
-            room=None,
-        )
-
-    if action is None:
-        return make_clarify_command(
-            response=(
-                "Bạn muốn thực hiện hành động nào với "
-                f"{device_display_name(device)} ở {room_display_name(room)}?"
-            ),
-            action=None,
             device=device,
             room=room,
         )
@@ -924,10 +1265,19 @@ def resolve_intent_after_merge(command: dict[str, Any]) -> dict[str, Any]:
 
 
 def default_response_for(command: dict[str, Any]) -> str:
-    """Câu trả lời mặc định cho một command đã đủ slot."""
+    """
+    Câu trả lời mặc định cho một command đã đủ slot.
+
+    PHẢI nêu rõ HÀNH ĐỘNG và PHÒNG, không chỉ thiết bị. Ở chế độ mô phỏng,
+    câu này là phản hồi DUY NHẤT người dùng nhận được - một câu chung chung
+    kiểu "Đã xử lý lệnh điều khiển đèn" giống hệt nhau cho cả bật lẫn tắt,
+    nên nó che mất lỗi parse: bot tắt đèn khi được bảo bật mà người dùng
+    không có cách nào biết.
+    """
     intent = command.get("intent")
     device = command.get("device")
     action = command.get("action")
+    room = command.get("room")
 
     if intent == "create_rule":
         return "Đã tạo luật tự động hóa."
@@ -935,12 +1285,165 @@ def default_response_for(command: dict[str, Any]) -> str:
     if intent == "query_status":
         return "Đang kiểm tra trạng thái thiết bị."
 
-    if device == "door":
-        if action == "open":
-            return "Cần xác thực khuôn mặt trước khi mở cửa."
-        return "Đã xử lý lệnh cửa chính."
+    if device == "door" and action == "open":
+        return "Cần xác thực khuôn mặt trước khi mở cửa."
 
-    return f"Đã xử lý lệnh điều khiển {device_display_name(device)}."
+    verb = action_display_name(action)
+    if not verb:
+        # Action lạ: thà mơ hồ còn hơn ghép ra một câu sai.
+        return f"Đã xử lý lệnh điều khiển {device_display_name(device)}."
+
+    return f"Đã {verb} {device_in_room_text(device, room)}."
+
+
+# Slot grounding
+#
+# Mọi giá trị room/device mà LLM trả về đều phải CÓ BẰNG CHỨNG trong câu người
+# dùng vừa nói, hoặc kế thừa từ lượt trước. Không có bằng chứng thì bỏ.
+
+GROUNDED_SLOTS = ("room", "device")
+
+
+def slot_has_evidence(
+    slot: str,
+    value: str,
+    text: str,
+) -> bool:
+    """
+    Câu người dùng có thật sự nhắc tới giá trị này không?
+
+    Đối chiếu với alias trong config/language_aliases.json, cộng thêm chính
+    khoá registry (model đôi khi trả thẳng "living_room").
+    """
+    alias_group = ROOM_ALIASES if slot == "room" else DEVICE_ALIASES
+    aliases = alias_list(alias_group, value, [value])
+
+    if value not in aliases:
+        aliases = [*aliases, value]
+
+    return best_alias_match(text, aliases) is not None
+
+
+def ground_slots(
+    command: dict[str, Any],
+    transcript: str,
+    pending_command: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """
+    Bỏ mọi slot mà câu người dùng KHÔNG có bằng chứng.
+
+    VÌ SAO CẦN
+    ----------
+    Khi đang có pending_command, model có xu hướng điền cho ĐỦ slot kể cả khi
+    câu nói không chứa thông tin nào. Ca quan sát được trên console:
+
+        Bot : Nhà bếp chưa được đăng ký. Bạn có muốn gửi yêu cầu không?
+        User: có
+        Bot : Đã bật đèn phòng ngủ.
+
+    Chữ "có" không nhắc tới phòng nào. Model tự chọn "bedroom", server thấy
+    bedroom + light là tổ hợp hợp lệ nên cho chạy - và phần cứng thật sự bị
+    tác động theo một giá trị không ai nói ra.
+
+    Đây là cùng một nguyên tắc đã áp cho face_auth và cho ngưỡng khuôn mặt,
+    lần này áp cho GIÁ TRỊ SLOT: model được phép đề xuất, nhưng server chỉ
+    chấp nhận cái nào truy được về câu người dùng thật sự nói.
+
+    Returns:
+        (command đã lọc, danh sách mô tả các slot bị bỏ - để ghi audit)
+    """
+    text = (transcript or "").lower().strip()
+    pending = pending_command or {}
+
+    grounded = dict(command)
+    dropped: list[str] = []
+
+    for slot in GROUNDED_SLOTS:
+        value = grounded.get(slot)
+
+        if not value or not isinstance(value, str):
+            continue
+
+        # Kế thừa từ lượt trước là hợp lệ: người dùng đã nói ở lượt đó rồi.
+        if pending.get(slot) == value:
+            continue
+
+        if slot_has_evidence(slot, value, text):
+            continue
+
+        grounded[slot] = None
+        dropped.append(
+            f"{slot}={value!r} bị bỏ: câu {transcript!r} không nhắc tới giá trị này."
+        )
+
+    return grounded, dropped
+
+
+def drop_inherited_conflict(
+    command: dict[str, Any],
+    fresh_command: dict[str, Any],
+    pending_command: dict[str, Any] | None,
+    device_registry: dict[str, dict[str, list[str]]],
+) -> tuple[dict[str, Any], list[str]]:
+    """
+    Gỡ tổ hợp (phòng, thiết bị) bất khả thi sinh ra do ghép ngữ cảnh.
+
+    VÌ SAO CẦN
+    ----------
+    merge_with_pending() điền slot còn thiếu từ lượt trước, nhưng nó không
+    kiểm tra tổ hợp kết quả có tồn tại không. Ca quan sát được trên console:
+
+        User: cửa chính          -> pending: room=main_door
+        User: bật đèn            -> ghép thành room=main_door + device=light
+        Bot : Bạn muốn thực hiện hành động nào với đèn ở cửa chính?
+
+    Cửa chính không có đèn. Hệ thống ĐÃ BIẾT điều đó ngay lúc ghép, nhưng vẫn
+    hỏi thêm một câu vô nghĩa rồi mới trượt validation ở lượt sau.
+
+    QUY TẮC: GIÁ TRỊ VỪA NÓI THẮNG GIÁ TRỊ KẾ THỪA.
+    Ngữ cảnh cũ là bằng chứng yếu hơn câu người dùng vừa nói ra. Người vừa
+    nói "bật đèn" thì họ muốn đèn - cái cần hỏi lại là phòng, không phải
+    hành động.
+
+    Khi CẢ HAI slot đều đến từ câu hiện tại ("bật đèn cửa chính"), đây là lệnh
+    sai thật sự chứ không phải lỗi ghép ngữ cảnh - để nguyên cho validator từ
+    chối kèm câu giải thích của failure_response().
+    """
+    room = command.get("room")
+    device = command.get("device")
+
+    if not room or not device:
+        return command, []
+
+    if room in device_registry and device in device_registry[room]:
+        return command, []
+
+    pending = pending_command or {}
+    fresh = fresh_command or {}
+
+    def inherited(slot: str) -> bool:
+        """Slot này đến từ lượt trước chứ không phải câu vừa nói?"""
+        return not fresh.get(slot) and pending.get(slot) == command.get(slot)
+
+    resolved = dict(command)
+    notes: list[str] = []
+
+    if inherited("room") and not inherited("device"):
+        notes.append(
+            f"room={room!r} (kế thừa) bị bỏ: không có {device!r} ở đó."
+        )
+        resolved["room"] = None
+
+    elif inherited("device") and not inherited("room"):
+        notes.append(
+            f"device={device!r} (kế thừa) bị bỏ: {room!r} không có thiết bị này."
+        )
+        resolved["device"] = None
+
+    for note in notes:
+        logger.info("Slot conflict: %s", note)
+
+    return resolved, notes
 
 
 def merge_with_pending(
@@ -1034,7 +1537,7 @@ def mock_parse_command(
             response="Bạn muốn điều khiển thiết bị nào?",
         )
 
-    device = detect_device(text, device_registry)
+    device = detect_device_excluding_room(text, device_registry)
     room = resolve_room(text, device, device_registry)
 
     # Multi-turn: "bật lên" một mình không có device, nên detect_action() bó tay.
@@ -1097,10 +1600,14 @@ def mock_parse_command(
             "room": room,
             "face_auth": requires_face_auth,
             "condition": None,
-            "response": (
-                "Cần xác thực khuôn mặt trước khi mở cửa."
-                if requires_face_auth
-                else "Đã xử lý lệnh cửa chính."
+            # Ủy quyền cho default_response_for() thay vì chép lại câu chữ.
+            "response": default_response_for(
+                {
+                    "intent": "control_device",
+                    "action": action,
+                    "device": "door",
+                    "room": room,
+                }
             ),
         }
 
@@ -1111,7 +1618,14 @@ def mock_parse_command(
         "room": room,
         "face_auth": False,
         "condition": None,
-        "response": f"Đã xử lý lệnh điều khiển {device_display_name(device)}.",
+        "response": default_response_for(
+            {
+                "intent": "control_device",
+                "action": action,
+                "device": device,
+                "room": room,
+            }
+        ),
     }
 
 
@@ -1488,22 +2002,75 @@ def parse_and_validate(
         )
         command = normalize_command(command, command_schema=command_schema)
 
+        # Bỏ những slot model tự bịa. PHẢI chạy TRƯỚC merge_with_pending, để
+        # giá trị bịa không kịp trở thành "slot đã biết" rồi được ghép tiếp.
+        command, ungrounded_slots = ground_slots(
+            command,
+            transcript,
+            pending_command,
+        )
+
         # Multi-turn: người dùng đang trả lời câu hỏi làm rõ trước đó.
         # Ghép slot mới vào command cũ, trừ khi họ đã đổi hẳn sang lệnh khác.
         if pending_command and not is_topic_change(command):
+            # Giữ bản trước khi ghép, để biết slot nào đến từ câu hiện tại và
+            # slot nào là kế thừa - drop_inherited_conflict() cần phân biệt.
+            fresh_command = dict(command)
+
             command = merge_with_pending(command, pending_command)
             command = normalize_command(command, command_schema=command_schema)
 
-            # Vẫn thiếu slot -> hỏi lại câu hỏi ĐÚNG với những gì đã biết,
-            # không lặp lại câu hỏi cũ ("thiết bị nào?" khi đã biết là quạt).
-            if command.get("intent") == "clarify":
-                command["response"] = missing_slot_question(command, device_registry)
+            command, _conflicts = drop_inherited_conflict(
+                command,
+                fresh_command,
+                pending_command,
+                device_registry,
+            )
+
+        # Người dùng nhắc tới một phòng có tên hợp lệ nhưng registry chưa có.
+        #
+        # PHÍA SERVER QUYẾT ĐỊNH, bất kể LLM trả gì. Trước đây chuyện này tuỳ
+        # engine: mock trả registry_request (đúng thiết kế, xem
+        # mentions_room_like), còn Gemini lúc reject lúc clarify - và khi nó
+        # trả clarify thì bot lặp lại y nguyên câu hỏi cũ, người dùng không hề
+        # biết phòng mình vừa nói không tồn tại.
+        #
+        # Điều kiện `not command.get("room")`: chỉ can thiệp khi CHƯA có phòng
+        # hợp lệ nào được xác định. Câu "bật đèn phòng khách" vẫn chạy bình
+        # thường dù có lỡ nhắc tới phòng khác.
+        unsupported_room = detect_unsupported_room(transcript, device_registry)
+
+        if unsupported_room and not command.get("room"):
+            # Lấy device/action từ ngữ cảnh khi câu hiện tại không có. Người
+            # dùng nói "bật đèn" rồi "nhà bếp" thì yêu cầu đăng ký phải ghi
+            # được CẢ HAI, nếu không quản trị viên chỉ biết phòng mà không
+            # biết thiết bị.
+            context = pending_command or {}
+            requested_device = command.get("device") or context.get("device")
+            requested_action = command.get("action") or context.get("action")
+
+            command = make_registry_request_command(
+                response=unsupported_room_response(
+                    unsupported_room,
+                    requested_device,
+                    device_registry,
+                    requested_action,
+                ),
+                action=requested_action,
+                device=requested_device,
+                room=unsupported_room,
+            )
 
         # Server-side security enforcement: LLM không được quyết định face_auth.
         command, policy_overrides = enforce_policy(
             command,
             command_schema=command_schema,
         )
+
+        # Slot bị bỏ cũng là bằng chứng model đi chệch. Ghi cùng chỗ với
+        # policy override để CommandService đẩy hết vào error_log.
+        if ungrounded_slots:
+            policy_overrides = [*ungrounded_slots, *policy_overrides]
 
         validation = validate_command(
             command=command,
@@ -1513,9 +2080,19 @@ def parse_and_validate(
 
         next_step = determine_next_step(command, validation)
 
-        # LLM trả command thiếu slot -> chuyển sang clarify kèm câu hỏi cụ thể,
-        # thay vì báo "lỗi hệ thống" cho người dùng.
-        if validation.get("code") == "missing_slot":
+        # MỌI câu hỏi làm rõ đều do SERVER soạn, bất kể LLM đã trả câu gì.
+        #
+        # Ba đường cùng dẫn tới đây: LLM tự trả intent="clarify", validator bắt
+        # missing_slot, và multi-turn ghép slot xong vẫn thiếu. Trước đây mỗi
+        # đường xử lý một kiểu, nên lượt clarify ĐẦU TIÊN của Gemini dùng câu
+        # của model - không kèm danh sách lựa chọn nào.
+        #
+        # Danh sách lựa chọn PHẢI lấy từ device_registry. Để model tự soạn thì
+        # nó hoặc bỏ trống (người dùng không biết chọn gì), hoặc bịa ra một
+        # phòng không tồn tại rồi dẫn người dùng vào ngõ cụt. Đây là nguyên tắc
+        # "mô hình diễn giải, server quyết định" áp cho TẬP LỰA CHỌN ĐƯỢC PHÉP
+        # ĐỀ XUẤT - và nhờ vậy mock với Gemini hỏi cùng một câu.
+        if next_step == "clarify":
             command = make_clarify_command(
                 response=missing_slot_question(command, device_registry),
                 action=command.get("action"),
