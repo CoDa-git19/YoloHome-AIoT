@@ -136,7 +136,7 @@ def test_command_service_registry_request_flow(transcript):
     assert result["ok"] is True
     assert result["next_step"] == "registry_request"
     assert result["execution_status"] == "registry_request"
-    assert result["result"] == "waiting_admin_review"
+    assert result["result"] == "registry_request: awaiting_confirmation"
     assert result["command"]["intent"] == "registry_request"
 
 
@@ -196,3 +196,57 @@ def test_rule_service_accepts_zero_threshold():
     assert len(actions) == 1
     assert actions[0]["device"] == "light"
     assert actions[0]["action"] == "turn_on"
+
+def test_registry_request_reaches_the_admin_queue_only_after_confirmation():
+    """
+    HỢP ĐỒNG ĐÃ ĐỔI: registry_request không còn TỰ ĐỘNG vào hàng đợi duyệt.
+
+    Trước đây mọi lần nhắc tới một phòng lạ đều tạo một dòng
+    waiting_admin_review, kể cả khi người dùng chưa trả lời gì. Hàng đợi của
+    quản trị viên đầy những yêu cầu không ai xác nhận.
+    """
+    cmd_service = CommandService(use_mock=True)
+    session_id = "reg-confirm"
+
+    asked = cmd_service.handle_transcript(
+        "bật máy lạnh phòng bếp", session_id=session_id
+    )
+    assert asked["result"] == "registry_request: awaiting_confirmation"
+
+    confirmed = cmd_service.handle_transcript("có", session_id=session_id)
+    assert confirmed["next_step"] == "registry_confirmed"
+    assert confirmed["result"] == "waiting_admin_review"
+
+
+def test_registry_request_can_be_cancelled():
+    cmd_service = CommandService(use_mock=True)
+    session_id = "reg-cancel"
+
+    cmd_service.handle_transcript("bật máy lạnh phòng bếp", session_id=session_id)
+    cancelled = cmd_service.handle_transcript("thôi", session_id=session_id)
+
+    assert cancelled["next_step"] == "registry_cancelled"
+    assert cancelled["result"] == "registry_request: cancelled_by_user"
+
+
+def test_answering_with_a_room_abandons_the_registry_request():
+    """Người dùng không bắt buộc phải trả lời câu hỏi của bot."""
+    cmd_service = CommandService(use_mock=True)
+    session_id = "reg-skip"
+
+    cmd_service.handle_transcript("bật đèn", session_id=session_id)
+    cmd_service.handle_transcript("nhà bếp", session_id=session_id)
+    done = cmd_service.handle_transcript("phòng khách", session_id=session_id)
+
+    assert done["next_step"] == "execute"
+
+
+def test_registry_request_records_what_to_register():
+    cmd_service = CommandService(use_mock=True)
+    session_id = "reg-slots"
+
+    cmd_service.handle_transcript("bật đèn", session_id=session_id)
+    asked = cmd_service.handle_transcript("nhà bếp", session_id=session_id)
+
+    assert asked["command"]["room"] == "kitchen"
+    assert asked["command"]["device"] == "light"
