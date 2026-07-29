@@ -12,10 +12,9 @@ SensorData = dict[str, Any]
 
 # Adafruit IO free tier: 30 data point/phút, tính GỘP trên tất cả feed.
 #   Nguồn: https://io.adafruit.com/api/docs/ (kiểm chứng 07/2026)
-# read_sensors() trả 4 khóa, vòng cảm biến chạy 2 giây/lần
-#   -> 4 x 30 = 120 data point/phút, vượt gấp 4 lần -> lỗi 429, khóa tài khoản.
-# 15 giây -> 4 x 4 = 16 data point/phút, an toàn.
-ADAFRUIT_MIN_PUBLISH_INTERVAL = 15.0
+# Yolo:Bit đã publish 4 feed sensor mỗi 10 giây -> 24 data point/phút.
+# Backend đẩy thêm vừa vượt hạn mức, vừa chỉ vọng lại chính feed vừa đọc
+#   -> Lưu lịch sử bằng SensorPersistObserver.
 
 
 # =============================================================================
@@ -181,50 +180,6 @@ class SensorLoggingObserver(Observer):
         return dict(self.history[-1]) if self.history else None
 
 
-class AdafruitPublisher(Observer):
-    """
-    Đẩy dữ liệu cảm biến lên Adafruit IO.
-
-    CÓ GIỚI HẠN TẦN SUẤT
-    --------------------
-    Vòng cảm biến chạy 2 giây/lần, nhưng gói free của Adafruit IO chỉ cho
-    khoảng 30 data point/phút. Mỗi lần publish gửi 1 request cho MỖI cảm
-    biến (temperature, humidity, light, motion), nên nếu đẩy theo đúng nhịp
-    cảm biến thì sẽ vượt giới hạn gấp 4 lần và bị chặn.
-
-    min_interval giữ khoảng cách tối thiểu giữa 2 lần đẩy. Dữ liệu cảm biến
-    môi trường thay đổi chậm nên 15 giây là quá đủ cho dashboard.
-
-    Lỗi mạng KHÔNG được làm sập rule engine. Subject.notify() đã cô lập lỗi
-    của từng observer nên chuyện đó không xảy ra.
-    """
-
-    def __init__(
-        self,
-        hardware_module: Any,
-        min_interval: float = ADAFRUIT_MIN_PUBLISH_INTERVAL,
-    ) -> None:
-        self.hardware_module = hardware_module
-        self.min_interval = min_interval
-        self.publish_count = 0
-        self.skipped_count = 0
-
-        # monotonic() không bị ảnh hưởng khi đồng hồ hệ thống bị chỉnh.
-        # Khởi tạo None để lần publish đầu tiên luôn được chạy ngay.
-        self._last_publish: float | None = None
-
-    def update(self, sensor_data: SensorData) -> None:
-        now = time.monotonic()
-        if self._last_publish is not None:
-            if now - self._last_publish < self.min_interval:
-                self.skipped_count += 1
-                return
-
-        self._last_publish = now
-        self.publish_count += 1
-        self.hardware_module.publish_to_adafruit(sensor_data)
-
-
 SENSOR_PERSIST_INTERVAL = 30.0
 
 
@@ -276,8 +231,6 @@ __all__ = [
     "Subject",
     "RuleObserver",
     "SensorLoggingObserver",
-    "AdafruitPublisher",
-    "ADAFRUIT_MIN_PUBLISH_INTERVAL",
     "SensorPersistObserver",
     "SENSOR_PERSIST_INTERVAL",
 ]
