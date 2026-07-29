@@ -271,6 +271,7 @@ def capture_frame(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     require_blink: bool = False,
     show_window: bool = True,
+    camera_index: int = 0,
 ):
     """
     Quét khuôn mặt từ camera, hỗ trợ liveness detection (chớp mắt).
@@ -285,6 +286,10 @@ def capture_frame(
         require_blink: bắt buộc chớp mắt trước khi chấp nhận khung hình.
             Chống tấn công bằng ảnh in hoặc video phát trên điện thoại.
         show_window: tắt khi chạy headless (máy chủ không có màn hình).
+        camera_index: chỉ số webcam, chỉ dùng khi cap=None. Máy có webcam rời
+            hoặc phần mềm camera ảo (OBS, Zoom, DroidCam) thường đẩy webcam
+            thật sang index 1-2; không cấu hình được thì Face Auth hỏng mà
+            không có cách nào sửa ngoài việc đổi code.
 
     Returns:
         Frame SẠCH (không dính nét vẽ) để đưa vào recognize(), hoặc None nếu
@@ -298,7 +303,7 @@ def capture_frame(
 
     owns_capture = cap is None
     if owns_capture:
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(camera_index)
 
     if not cap.isOpened():
         if owns_capture:
