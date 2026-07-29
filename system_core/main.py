@@ -65,10 +65,15 @@ class MainOrchestrator:
 
         # --- MODULES ---
         self.hardware_module = HardwareModule()
-        self.stt_engine = None          # STTModule(...)      - Contract A
-        self.face_module = None         # FaceModule(...)     - Contract B
-        self.auth_service = None        # AuthService(...)    - Contract B
-        self.camera = None              # cv2.VideoCapture(0) - System owner
+        self.stt_engine = None          # Contract A
+        self.face_module = None         # Contract B
+        self.auth_service = None        # Contract B (Ly) - chưa có
+        self.camera = None              # cv2.VideoCapture - orchestrator SỞ HỮU
+        self.liveness_capture = None    # face_module.capture_frame, nếu bật
+
+        # _wire_face_auth() / _wire_stt() KHÔNG gọi ở đây. AuthService cần
+        # command_service, mà nó mãi khối SERVICES bên dưới mới tồn tại.
+        # Xem chú thích ở chỗ gọi thật sự.
 
         if self.use_mock_llm:
             print("[System] Running LLM in MOCK mode (no API calls).")
@@ -86,6 +91,13 @@ class MainOrchestrator:
             llm_strategy=self.llm_engine,
             use_mock=self.use_mock_llm,
         )
+
+        # --- MODULE NGOẠI VI ---
+        # PHẢI đứng sau khối SERVICES: _wire_face_auth() dựng AuthService, mà
+        # AuthService nhận command_service qua constructor. Chuyển hai dòng này
+        # lên trên sẽ ném AttributeError ngay lúc boot.
+        self._wire_face_auth()
+        self._wire_stt()
 
         # --- OBSERVER PATTERN ---
         # BẮT BUỘC. Thiếu dòng này thì automation rule hỏng ÂM THẦM:
@@ -117,6 +129,113 @@ class MainOrchestrator:
         print("[System] Initialization complete!")
 
     # =========================================================================
+    # Wiring các module tùy chọn
+    #
+    # Cả hai hàm dưới đây FAIL SOFT: thiếu thư viện, thiếu model, thiếu webcam
+    # thì gateway vẫn boot, chỉ tính năng đó tắt và có log rõ ràng. Máy một bạn
+    # chưa cài được dlib không được phép làm sập hệ thống của cả nhóm.
+    #
+    # Mặc định TẮT (ENABLE_FACE_AUTH / ENABLE_STT = false) nên test suite và CI
+    # không bao giờ chạm vào webcam hay tải model.
+    # =========================================================================
+
+    def _wire_face_auth(self) -> None:
+        if not settings.ENABLE_FACE_AUTH:
+            print("[Config] Face Auth = OFF (ENABLE_FACE_AUTH=false)")
+            return
+
+        try:
+            import cv2
+
+            # Nạp SẴN dlib ngay lúc boot. face_module cố ý import nặng bên
+            # trong hàm để test chạy offline được; nạp trước ở đây thì lần
+            # nhận diện đầu tiên không bị khựng 1-2 giây giữa lúc demo, và
+            # lỗi thiếu thư viện lộ ra ngay bây giờ thay vì lúc mở cửa.
+            import face_recognition  # noqa: F401
+
+            from modules.face_recognition.face_module import (
+                SvmFaceRecognizer,
+                capture_frame,
+            )
+
+            self.face_module = SvmFaceRecognizer()
+
+            camera = cv2.VideoCapture(settings.CAMERA_INDEX)
+            if not camera.isOpened():
+                camera.release()
+                raise RuntimeError(
+                    f"không mở được camera index={settings.CAMERA_INDEX}"
+                )
+
+            # Contract B: orchestrator là CHỦ SỞ HỮU DUY NHẤT của VideoCapture.
+            # Face module đọc frame từ đối tượng này qua tham số cap, KHÔNG tự
+            # mở camera - hai chỗ cùng giữ webcam thì chỗ thứ hai nhận None và
+            # Face Auth từ chối mọi lệnh mà không rõ nguyên nhân.
+            self.camera = camera
+            self.liveness_capture = capture_frame
+
+            # AuthService dựng TRONG CÙNG try/except với face_module là có chủ
+            # đích. Hai thứ này phải có cùng vòng đời: không bao giờ được rơi
+            # vào trạng thái auth_service tồn tại mà face_module là None, hay
+            # ngược lại. Tách ra hai hàm thì bất biến đó nằm ở hai chỗ và sẽ
+            # lệch nhau lúc nào không biết.
+            from services.auth_service import AuthService
+
+            self.auth_service = AuthService(
+                face_recognizer=self.face_module,
+                command_service=self.command_service,
+            )
+
+            print("[Config] Face Auth = ON (SvmFaceRecognizer + liveness)")
+
+        except (Exception, SystemExit) as exc:
+            # BẮT CẢ SystemExit là có chủ đích.
+            #
+            # Thư viện face_recognition gọi quit() khi thiếu gói model:
+            #     try:
+            #         import face_recognition_models
+            #     except Exception:
+            #         print("Please install `face_recognition_models`...")
+            #         quit()
+            #
+            # quit() ném SystemExit, mà SystemExit kế thừa BaseException chứ
+            # KHÔNG kế thừa Exception. Chỉ bắt Exception thì nó lọt qua, và cả
+            # gateway thoát ngay giữa lúc boot - toàn bộ thiết kế fail soft bị
+            # vô hiệu bởi đúng một lời gọi quit() trong thư viện bên thứ ba.
+            #
+            # KHÔNG dùng `except BaseException`: nó nuốt luôn KeyboardInterrupt
+            # và Ctrl+C sẽ không dừng được chương trình.
+            #
+            # Fail closed toàn phần. Để sót auth_service khác None ở đây nghĩa
+            # là _handle_auth_required() sẽ đi nhánh AuthService với một
+            # face_recognizer hỏng, thay vì nhánh fallback.
+            self.face_module = None
+            self.auth_service = None
+            self.camera = None
+            self.liveness_capture = None
+            log_error("gateway", f"Face Auth wiring failed: {exc}")
+            print(f"[Config] Face Auth = OFF ({exc})")
+
+    def _wire_stt(self) -> None:
+        if not settings.ENABLE_STT:
+            print("[Config] STT = OFF (ENABLE_STT=false)")
+            return
+
+        try:
+            from modules.speech_recognition.stt_module import PhoWhisperSTT
+
+            self.stt_engine = PhoWhisperSTT(model_name=settings.STT_MODEL_NAME)
+            print(f"[Config] STT = ON ({self.stt_engine.model_name})")
+
+        except (Exception, SystemExit) as exc:
+            # Cùng lý do với _wire_face_auth(): thư viện bên thứ ba có thể gọi
+            # quit()/sys.exit() lúc import khi thiếu phụ thuộc. Thiếu STT
+            # không được phép làm sập gateway.
+            self.stt_engine = None
+            log_error("gateway", f"STT wiring failed: {exc}")
+            print(f"[Config] STT = OFF ({exc})")
+
+    # =========================================================================
     # Vòng đọc cảm biến
     # =========================================================================
 
@@ -141,6 +260,15 @@ class MainOrchestrator:
     def stop(self) -> None:
         """Dừng vòng cảm biến (dùng khi thoát chương trình hoặc trong test)."""
         self._stop_event.set()
+
+        # Trả webcam lại cho hệ điều hành. Không release thì trên Windows lần
+        # chạy sau sẽ báo "camera đang được ứng dụng khác sử dụng".
+        if self.camera is not None:
+            try:
+                self.camera.release()
+            except Exception:
+                pass
+            self.camera = None
 
     # =========================================================================
     # Hai đường vào: giọng nói và văn bản
@@ -222,14 +350,32 @@ class MainOrchestrator:
 
     def capture_frame(self):
         """
-        Chụp một khung hình cho Face Auth.
+        Lấy một khung hình cho Face Auth.
 
-        Contract B ghi rõ việc lấy frame thuộc về System owner, không phải
-        Face owner. Trả None khi chưa có camera - AuthService phải coi đó là
-        trường hợp "không có khuôn mặt" và TỪ CHỐI, không phải cho qua.
+        Contract B (đã sửa đổi): VideoCapture thuộc về System owner, nhưng khi
+        bật liveness thì face module cần ĐỌC NHIỀU FRAME từ chính đối tượng đó -
+        chớp mắt không thể phát hiện bằng một khung hình duy nhất. Vì vậy ở đây
+        truyền self.camera xuống thay vì để face module tự mở camera.
+
+        Nhánh self.camera.read() bên dưới được giữ lại có chủ đích: khi
+        liveness_capture là None (test suite, hoặc ENABLE_FACE_AUTH=false),
+        hành vi y hệt bản cũ.
+
+        Trả None khi chưa có camera / không bắt được chớp mắt. AuthService phải
+        coi đó là "không có khuôn mặt" và TỪ CHỐI, không phải cho qua.
         """
         if self.camera is None:
             return None
+
+        if self.liveness_capture is not None:
+            try:
+                return self.liveness_capture(
+                    cap=self.camera,
+                    require_blink=settings.FACE_REQUIRE_BLINK,
+                )
+            except Exception as exc:
+                log_error("gateway", f"liveness capture failed: {exc}")
+                return None
 
         try:
             ok, frame = self.camera.read()
