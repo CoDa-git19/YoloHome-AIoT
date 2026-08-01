@@ -78,10 +78,16 @@ scipy==1.17.1
 # nhìn như model không nghe được gì.
 # -----------------------------------------------------------------------------
 torch==2.13.0
-transformers==4.38.0
-tokenizers==0.15.2
-safetensors==0.8.0
-huggingface_hub==0.36.2
+transformers==5.14.1
+tokenizers==0.22.2
+huggingface_hub==1.26.0
+hf_xet==1.5.2
+typer==0.27.0
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+shellingham==1.5.4
+annotated-doc==0.0.5
 regex==2026.7.19
 sounddevice==0.5.5
 soundfile==0.12.1

@@ -1,38 +1,37 @@
 # Design Principles
 
-Tài liệu này ghi lại **tám nguyên lý** chi phối cách YoloHome-AIoT được viết.
-Chúng không phải quy ước phong cách. Mỗi nguyên lý ra đời từ một lỗi có thật
-trong quá trình phát triển, và mỗi nguyên lý đều có test khoá lại.
+This document records the **eight principles** that govern how YoloHome-AIoT is
+written. They are not style conventions. Each one came out of a real bug during
+development, and each one has a test locking it in place.
 
-Khi review code hoặc thêm module mới, đây là danh sách để đối chiếu.
+Use this as a checklist when reviewing code or adding a module.
 
 ---
 
-## 1. Mô hình diễn giải. Server quyết định.
+## 1. The model interprets. The server decides.
 
-> *The model interprets. The server decides.*
+A probabilistic component — the LLM or the face recognition model — is allowed to
+**report what it observed**. But whatever turns observation into **authority** is
+always server-side configuration.
 
-Một thành phần xác suất — LLM hay model nhận diện khuôn mặt — được phép **báo
-cáo nó nhận thấy gì**. Nhưng cái biến nhận thức thành **quyền hạn** luôn là cấu
-hình phía server.
+**Applied in five places, with the same reasoning:**
 
-**Áp dụng ở năm chỗ, cùng một lập luận:**
-
-| # | Thành phần báo cáo | Server quyết định | Nơi thực thi |
+| # | Component reports | Server decides | Enforced in |
 |---|---|---|---|
-| 1 | LLM trả `face_auth` | `device_capabilities.json` | `validator.enforce_policy()` |
-| 2 | Face model trả `confidence` | `FACE_AUTH_THRESHOLD` | `AuthService` |
-| 3 | LLM soạn câu hỏi làm rõ | `device_registry.json` quyết định **tập lựa chọn** | `missing_slot_question()` |
-| 4 | LLM điền giá trị slot | Câu người dùng quyết định **có bằng chứng hay không** | `ground_slots()` |
-| 5 | LLM phân loại phòng lạ | Registry quyết định phòng nào tồn tại | `detect_unsupported_room()` |
+| 1 | LLM returns `face_auth` | `device_capabilities.json` | `validator.enforce_policy()` |
+| 2 | Face model returns `confidence` | `FACE_AUTH_THRESHOLD` | `AuthService` |
+| 3 | LLM writes the clarification question | `device_registry.json` decides **the set of options** | `missing_slot_question()` |
+| 4 | LLM fills in slot values | the user's utterance decides **whether there is evidence** | `ground_slots()` |
+| 5 | LLM classifies an unknown room | the registry decides which rooms exist | `detect_unsupported_room()` |
 
-`enforce_policy()` ghi đè theo **cả hai chiều**: ép `True` khi policy yêu cầu mà
-LLM trả `false`, và ép `False` khi policy không yêu cầu mà LLM trả `true`.
+`enforce_policy()` overrides in **both directions**: it forces `True` when policy
+requires it but the LLM returned `false`, and forces `False` when policy does not
+require it but the LLM returned `true`.
 
-`AuthService` **cố ý bỏ qua** cờ `authorized` nếu face module có trả về. Tin nó
-nghĩa là một model bị thay thế có thể tự cấp quyền cho chính mình.
+`AuthService` **deliberately ignores** an `authorized` flag if the face module
+returns one. Trusting it would let a swapped-in model grant itself permission.
 
-Chỗ số 4 sinh ra từ một ca quan sát được trên console:
+Item 4 came from a case observed on the console:
 
 ```
 Bot : Nhà bếp chưa được đăng ký. Bạn có muốn gửi yêu cầu không?
@@ -40,198 +39,236 @@ User: có
 Bot : Đã bật đèn phòng ngủ.
 ```
 
-Chữ `"có"` không nhắc tới phòng nào. Model tự chọn `bedroom`, server thấy tổ hợp
-hợp lệ nên cho chạy — và **phần cứng bị tác động thật** theo một giá trị không
-ai nói ra.
+The word `"có"` ("yes") mentions no room at all. The model picked `bedroom` on
+its own, the server saw a valid combination and let it run — and **hardware was
+actually actuated** on a value nobody uttered.
 
-Chỗ số 3 sinh ra từ ca ngược lại: bot gợi ý *"phòng ngủ, phòng khách, cửa chính"*
-khi người dùng hỏi về đèn — mà cửa chính không có đèn. Người dùng làm đúng lời
-bot dặn và vẫn bị từ chối.
+Item 3 came from the mirror image: the bot suggested *"bedroom, living room,
+main door"* when the user asked about a light — but the main door has no light.
+The user followed the bot's own advice and was still rejected.
 
-**Test khoá lại:** `test_security_policy.py`, `test_auth_service.py`,
+**Locked in by:** `test_security_policy.py`, `test_auth_service.py`,
 `test_slot_suggestions.py`, `test_slot_grounding.py`, `test_unsupported_room.py`
 
 ---
 
 ## 2. Fail closed
 
-Thiếu module, camera lỗi, model ném exception, mạng chết, database khoá — tất cả
-đều dẫn tới **TỪ CHỐI**. Không có nhánh nào mang nghĩa "vì không chắc nên cho qua".
+Missing module, camera failure, model exception, dead network, locked database —
+all of these lead to **DENIAL**. There is no branch that means "not sure, so let
+it through".
 
-Chi phí của một lần từ chối nhầm là người dùng quét lại. Chi phí của một lần cho
-qua nhầm là cửa nhà mở.
+The cost of a false rejection is that the user scans again. The cost of a false
+acceptance is an open front door.
 
-**Điểm cần nhớ:** cờ `face_auth=True` chỉ **định tuyến** lệnh sang `AuthService`,
-nó không tự chặn gì. `CommandService.execute_authorized_command()` cũng **không**
-kiểm tra lại. Vì vậy `AuthService` là **chốt chặn duy nhất ở thời điểm thực thi**.
+**Worth remembering:** the `face_auth=True` flag only **routes** a command to
+`AuthService`; it blocks nothing by itself.
+`CommandService.execute_authorized_command()` does **not** re-check it either.
+That makes `AuthService` the **sole enforcement point at execution time**.
 
-Hệ quả trực tiếp: `execute_authorized_command()` chỉ được gọi ở đúng **hai chỗ**
-trong toàn hệ thống — `AuthService.authorize_and_execute()` (sau khi xác thực) và
-`RuleObserver.update()` (chỉ cho lệnh **không** cần face auth).
+Direct consequence: `execute_authorized_command()` is called in exactly **two
+places** system-wide — `AuthService.authorize_and_execute()` (after
+authentication) and `RuleObserver.update()` (only for commands that do **not**
+require face auth).
 
-**Fail closed có thể bị vô hiệu từ bên ngoài.** `face_recognition` gọi `quit()`
-khi thiếu gói model; `quit()` ném `SystemExit`, vốn kế thừa `BaseException` chứ
-không kế thừa `Exception`. Một khối `except Exception` để nó lọt qua và cả gateway
-thoát giữa lúc boot. `_wire_face_auth()` vì vậy bắt `(Exception, SystemExit)` —
-nhưng **không** bắt `BaseException`, để Ctrl+C vẫn dừng được chương trình.
+**Fail-closed can be defeated from outside.** `face_recognition` calls `quit()`
+when its model package is missing; `quit()` raises `SystemExit`, which inherits
+from `BaseException`, not from `Exception`. A plain `except Exception` lets it
+through and the entire gateway exits mid-boot. `_build_face()` and `_build_stt()`
+therefore catch `(Exception, SystemExit)` — but **not** `BaseException`, so
+Ctrl+C still stops the program.
 
-**Test khoá lại:** mọi test trong `test_auth_service.py` đều assert số lần gọi
-`execute_authorized_command()`, không chỉ assert chuỗi trả về. Một test chỉ kiểm
-tra câu trả lời sẽ vẫn xanh ngay cả khi hệ thống mở cửa cho người lạ.
+**And fail-closed has a hard limit.** `tokenizers` (a Rust library) crashes at
+the native layer when run in the wrong environment: the process dies without
+Python ever regaining control, so **no** `except` block can catch it. Fail-soft
+only works while the error is still at the Python layer. See
+`Setup-Windows.md` §10.
+
+**Locked in by:** every test in `test_auth_service.py` asserts on the number of
+calls to `execute_authorized_command()`, not just on the returned string. A test
+that only checks the reply text would stay green even if the system opened the
+door for a stranger.
 
 ---
 
-## 3. Hỏng thì phải kêu
+## 3. If it breaks, it must make noise
 
-Lỗi tệ nhất không phải lỗi làm sập chương trình. Lỗi tệ nhất là lỗi khiến hệ
-thống **báo thành công rồi không làm gì cả** — hoặc **báo sai nguyên nhân**.
+The worst bug is not the one that crashes the program. The worst bug is the one
+that makes the system **report success while doing nothing** — or **report the
+wrong cause**.
 
-**Danh mục lỗi âm thầm đã gặp trong dự án này:**
+**Catalogue of silent failures encountered in this project:**
 
-| Lỗi | Biểu hiện | Cách chặn |
+| Bug | Symptom | How it is now caught |
 |---|---|---|
-| Observer chưa attach | Rule lưu vào DB, báo "đã tạo", không bao giờ chạy | attach tường minh + `test_observer_pattern.py` |
-| `use_mock=True` mặc định | Bỏ qua Gemini hoàn toàn, kết quả trông vẫn đúng | in `[Config] USE_MOCK_LLM` lúc boot |
-| Thiếu ffmpeg | `transcribe()` trả `""`, trông như model không nghe được | `_check_ffmpeg()` chạy đầu tiên |
-| ABC dự phòng trong `except ImportError` | `isinstance()` trả `False` mà công cụ test vẫn chạy ngon | `_check_strategy_identity()` |
-| Đổi tên khoá cảm biến | Mọi automation rule ngừng kích hoạt, không lỗi, không log | 4 khoá được ghi rõ là **hợp đồng** |
-| Thiếu `"state"` khi `get_status` | Người dùng luôn nhận "không xác định được trạng thái" | `contracts.check_status_result()` |
-| Nhãn `Unknown` truthy | Người lạ **mở được cửa** | `_as_identity()` + `REJECT_NAMES`, hai lớp |
-| **Câu trả lời do LLM soạn trước khi validate** | Log ghi `failed`, người dùng nghe `"Đã bật đèn"` | `failure_response()` |
-| **Tên phòng nuốt tên thiết bị** | `"bật đèn cửa chính"` thành lệnh **mở cửa** | `detect_device_excluding_room()` |
-| **Thư viện in gợi ý sai sự thật** | Bảo cài gói đã có sẵn; nguyên nhân thật bị nuốt | chạy thẳng `import` để lộ lỗi |
+| Observer never attached | Rule saved to DB, "created" reported, never fires | explicit attach + `test_observer_pattern.py` |
+| `use_mock=True` by default | Bypasses Gemini entirely, output still looks right | `[Config] USE_MOCK_LLM` printed at boot |
+| Missing ffmpeg | `transcribe()` returns `""`, looks like the model heard nothing | `_check_ffmpeg()` runs first |
+| Fallback ABC in `except ImportError` | `isinstance()` returns `False` while the manual tool works fine | `_check_strategy_identity()` |
+| Renamed sensor key | Every automation rule stops firing — no error, no log | the 4 keys documented as a **contract** |
+| Missing `"state"` on `get_status` | User always hears "trạng thái không xác định" | `contracts.check_status_result()` |
+| Truthy `Unknown` label | A stranger **opens the door** | `_as_identity()` + `REJECT_NAMES`, two layers |
+| **Reply written by the LLM before validation** | Log says `failed`, user hears "Đã bật đèn" | `failure_response()` |
+| **Room name swallowing the device name** | `"bật đèn cửa chính"` becomes an **open-door** command | `detect_device_excluding_room()` |
+| **Library printing a false suggestion** | Tells you to install a package that is already installed | run the `import` directly to expose the real error |
+| **`tokenizers` crashing at the Rust layer** | Process exits silently — no traceback, no exit code | upgrade `transformers`; isolate by loading each component |
+| **CLI flag silently overriding `.env`** | `USE_MOCK_STT=false` has no effect, log still says MOCK | CLI flag returns `None` so `settings` decides |
 
-Ba dòng cuối là mới, và dòng cuối cùng đến từ **bên ngoài code của nhóm**. Nguyên
-lý này không dừng ở ranh giới dự án: một thư viện bắt `Exception` rồi in thông báo
-sai cũng gây mất hàng giờ y như lỗi tự viết. Xem `Setup-Windows.md` §5.
+The last five rows are recent. Two of them come from **outside the team's code**:
+this principle does not stop at the project boundary — a library that catches
+`Exception` and prints a misleading message costs just as many hours as a
+self-inflicted bug. See `Setup-Windows.md` §5 and §10.
 
-Nguyên tắc rút ra: **nếu một thứ có thể hỏng mà không ai biết, phải có chỗ hét
-lên** — log ERROR, dòng `[Config]` lúc boot, hoặc một test đỏ.
+The last row is a case hit while enabling STT: `main()` contained
+`use_mock_stt=True if (args.mock_stt or not args.voice) else False`, so running
+without `--voice` forced mock regardless of `.env`. The system ran smoothly, the
+replies were sensible, no errors appeared — but it was doing something entirely
+different from what the user believed. The only thing that gave it away was the
+`[Config]` line printed at boot.
+
+The rule: **if something can break without anyone noticing, there must be
+somewhere it shouts** — an ERROR log, a `[Config]` line at boot, or a failing
+test.
 
 ---
 
-## 4. Một sự việc, một nguồn sự thật
+## 4. One fact, one source of truth
 
-Danh sách phòng, thiết bị, hành động, cảm biến, câu hỏi, câu trả lời — mỗi thứ
-chỉ được định nghĩa **đúng một lần**.
+Rooms, devices, actions, sensors, questions, replies — each is defined **exactly
+once**.
 
-**Mẫu lỗi này lặp lại ba lần trong cùng một đợt sửa:**
+**This failure mode recurred three times in a single round of fixes:**
 
-| Lần | Chỗ trùng lặp | Hậu quả |
+| # | Duplicated in | Consequence |
 |---|---|---|
-| 1 | Câu hỏi clarify chép ở `validate_mock_slots` | mock hỏi khác Gemini |
-| 2 | Câu trả lời thành công chép ở 3 chỗ | mock trả câu chung chung cho cả bật lẫn tắt |
-| 3 | Ba nhánh soạn clarify khác nhau | lượt clarify đầu của Gemini mất danh sách gợi ý |
+| 1 | Clarification question copied into `validate_mock_slots` | mock asked differently from Gemini |
+| 2 | Success reply copied in 3 places | mock returned a generic phrase for both on and off |
+| 3 | Three separate branches composing clarify | Gemini's first clarify turn lost the option list |
 
-Cả ba đều được phát hiện bằng **so sánh mock với Gemini trên cùng input**, không
-phải bằng đọc code. `MockLLMStrategy` vì vậy không chỉ là công cụ test — nó là
-**đặc tả thi hành được** của hành vi mong muốn. Chỗ nào hai engine lệch nhau là
-chỗ đó có bug.
+All three were found by **comparing mock against Gemini on the same input**, not
+by reading code. `MockLLMStrategy` is therefore not merely a test tool — it is an
+**executable specification** of the intended behaviour. Wherever the two engines
+diverge, there is a bug.
 
-Cùng lý do: `settings.STT_MODEL_NAME` đọc **đúng biến môi trường** mà
-`stt_module` đã đọc (`PHOWHISPER_MODEL`), không đặt tên mới.
+Same reasoning: `settings.PHOWHISPER_MODEL` reads **the same environment
+variable** that `stt_module` already reads, rather than introducing a new name.
 
-**Hệ quả về bảo mật, ghi lại chứ không giấu:** quyền ghi vào
-`command_schema.json` và `device_capabilities.json` tương đương quyền điều khiển
-toàn bộ chính sách xác thực. Rủi ro được **dời chỗ**, không bị loại bỏ.
-
----
-
-## 5. Test phải chạy offline
-
-Toàn bộ test suite chạy được trên máy **không** cài dlib, **không** có webcam,
-**không** có micro, **không** có API key, **không** có phần cứng.
-
-Vi phạm nguyên tắc này thì CI không chạy được, và các thành viên không làm phần
-AI cũng bị chặn.
-
-**Ba kỹ thuật giữ nguyên tắc này:**
-
-1. **Lazy import.** `cv2` / `face_recognition` / `numpy` import **bên trong hàm**.
-   Đổi lại, `_wire_face_auth()` nạp sẵn lúc boot để lần nhận diện đầu không khựng
-   và lỗi thiếu thư viện vẫn lộ ra sớm.
-2. **Tách logic thuần khỏi logic cần I/O.** `SvmFaceRecognizer._as_identity()`
-   chỉ xử lý chuỗi, nên test được mà không cần camera hay model.
-3. **Dependency injection.** `AuthService(logging_service=...)` cho phép tiêm
-   LoggingService giả, test không cần database.
-
-**Cảnh báo:** cách "chữa" bằng `pytest.importorskip` là **sai**. Trên máy thiếu
-thư viện, test sẽ **âm thầm skip** và pytest vẫn báo xanh — test an ninh quan
-trọng nhất biến mất mà không ai biết. Đó chính là lỗi mà nguyên lý 3 cấm.
-
-**Công cụ thủ công đặt trong `tests/`** (tên bắt đầu bằng `test_` nên pytest sẽ
-import) phải để mọi phụ thuộc nặng trong `main()`, kèm `__test__ = False`.
+**A security consequence, recorded rather than hidden:** write access to
+`command_schema.json` and `device_capabilities.json` is equivalent to control
+over the entire authentication policy. The risk is **relocated**, not eliminated.
 
 ---
 
-## 6. Một tài nguyên, một chủ sở hữu
+## 5. Tests must run offline
 
-Mỗi tài nguyên hệ thống chỉ có **đúng một** chủ sở hữu chịu trách nhiệm mở và
-đóng nó.
+The whole test suite runs on a machine with **no** dlib, **no** webcam, **no**
+microphone, **no** API key and **no** hardware.
 
-| Tài nguyên | Chủ sở hữu | Người dùng |
+Violating this breaks CI, and blocks team members who are not working on the AI
+parts.
+
+**Three techniques that keep it that way:**
+
+1. **Lazy imports.** `cv2` / `face_recognition` / `numpy` are imported **inside
+   functions**. In exchange, `_build_face()` preloads them at boot so the first
+   recognition doesn't stall and a missing library still surfaces early.
+2. **Separating pure logic from I/O logic.** `SvmFaceRecognizer._as_identity()`
+   only manipulates strings, so it is testable without a camera or a model file.
+3. **Dependency injection.** `AuthService(logging_service=...)` accepts a fake
+   logging service, so its tests need no database.
+
+**Warning:** "fixing" this with `pytest.importorskip` is **wrong**. On a machine
+missing the library the test **silently skips** and pytest still reports green —
+the most important security test disappears without anyone noticing. That is
+precisely the failure mode principle 3 forbids.
+
+**Manual tools placed under `tests/`** (their names start with `test_`, so pytest
+imports them) must keep every heavy dependency inside `main()` and set
+`__test__ = False`.
+
+---
+
+## 6. One resource, one owner
+
+Every system resource has **exactly one** owner responsible for opening and
+closing it.
+
+| Resource | Owner | Note |
 |---|---|---|
-| `cv2.VideoCapture` | `MainOrchestrator` | `face_module.capture_frame(cap=...)` |
-| Kết nối Adafruit IO | `HardwareModule` | `AdafruitPublisher` |
-| `LLMStrategy` | `MainOrchestrator` | `CommandService`, benchmark |
+| `cv2.VideoCapture` | `face_module.capture_frame()` | opened on demand, closed after one scan |
+| MQTT connection | `HardwareModule` | lazy, shared by both subscribe and publish |
+| `LLMStrategy` | `MainOrchestrator` | shared between `CommandService` and the benchmark |
 
-Hai chỗ cùng mở webcam thì trên Windows chỗ thứ hai nhận `None`, và Face Auth từ
-chối mọi lệnh **mà không rõ nguyên nhân**.
+If two places open the webcam, on Windows the second one receives `None` and Face
+Auth rejects every command **for no visible reason**.
 
-`capture_frame()` phản ánh nguyên tắc này bằng cờ `owns_capture`: chỉ đóng camera
-nếu chính nó mở.
+`capture_frame()` expresses this with the `owns_capture` flag: it closes the
+camera only if it opened it. A caller that passes `cap` in is responsible for
+closing it.
 
-Cùng nguyên tắc áp cho tầng mạng: hệ thống từng có **hai đường** tới Adafruit IO
-— MQTT để nhận cảm biến, REST để đẩy dữ liệu lên. Đường thứ hai vừa thừa vừa gây
-echo: thiết bị publish `home-temperature`, backend subscribe nhận về rồi publish
-ngược lên chính feed đó, nhân đôi data point trên gói free 30 điểm/phút.
+**The camera is opened on demand, not held for the session.** Holding it locks
+the webcam all afternoon, so OBS, Zoom and screen recorders stop working —
+exactly during the demo. The trade-off is about one extra second when unlocking
+the door, which is acceptable since the user is already standing there waiting to
+be scanned.
 
----
-
-## 7. Hợp đồng được kiểm tra lúc khởi động
-
-Sai lệch interface phải lộ ra **lúc boot**, không phải giữa lúc demo.
-
-`system_core/contracts.py` kiểm tra chữ ký của `LLMStrategy` và sự tồn tại của
-`execute_command()` ngay khi khởi tạo. `settings.check_config()` in cảnh báo lúc
-import — bật `ENABLE_FACE_AUTH=true` mà thiếu `face_model.pkl` thì biết ngay.
-
-Nguyên tắc này mở rộng sang **phụ thuộc lúc chạy**, không chỉ interface nội bộ.
-Phiên bản `scikit-learn` dùng để train `face_model.pkl` là một hợp đồng ngầm:
-pickle load được qua các bản minor kèm cảnh báo, nhưng khi hỏng thì nó hỏng theo
-kiểu tệ nhất — **unpickle thành công nhưng dự đoán sai**. Xem `Setup-Windows.md` §3.
+The same principle applies at the network layer: the system once had **two paths**
+to Adafruit IO — MQTT to receive sensors, REST (the `adafruit-io` package) to push
+data up. The second was both redundant and harmful: the device publishes
+`home-temperature`, the backend subscribes, then republishes to that same feed,
+doubling data points against a free tier limited to 30 per minute. Now removed;
+`publish_to_adafruit()` uses the existing MQTT client.
 
 ---
 
-## 8. Ghi lại giả định tin cậy, đừng giấu
+## 7. Contracts are checked at startup
 
-Hệ thống nào cũng có những chỗ phải tin. Nguyên tắc không phải là loại bỏ chúng —
-mà là **viết ra**.
+Interface mismatches must surface **at boot**, not mid-demo.
 
-- `pickle.load()` trên `models/face_model.pkl` **thực thi mã** trong file. Ai ghi
-  được vào file đó thì chiếm được tiến trình gateway.
-- Quyền ghi `command_schema.json` / `device_capabilities.json` tương đương quyền
-  điều khiển chính sách xác thực.
-- `FACE_REQUIRE_BLINK=false` khiến một tấm ảnh in cũng qua được xác thực.
-  `check_config()` cảnh báo nếu bật cờ này.
-- Liveness hiện xác nhận trên **cả khung hình**, không gắn với khuôn mặt cụ thể:
-  kẻ lạ có thể cầm ảnh in của người nhà đứng cạnh mặt mình rồi tự chớp mắt.
-  Đã đánh dấu `TODO` trong `recognize()`.
-- Đường dẫn dự án phải toàn ký tự ASCII — `dlib` và `OpenCV` là thư viện C++,
-  không mở được file qua đường dẫn chứa ký tự tiếng Việt.
+`system_core/contracts.py` checks the signature of `LLMStrategy` and the presence
+of `execute_command()` at construction time. `settings.check_config()` prints
+warnings at import — setting `USE_MOCK_FACE=false` with no `face_model.pkl`
+present is reported immediately, and setting `USE_MOCK_FACE=true` is also flagged
+because the mock lets **anyone** open the door.
 
-Giả định được ghi lại là một quyết định kỹ thuật. Giả định không được ghi lại là
-một lỗ hổng đang chờ.
+The principle extends to **runtime dependencies**, not just internal interfaces.
+The `scikit-learn` version used to train `face_model.pkl` is an implicit
+contract: pickles load across minor versions with a warning, but when they break
+they break in the worst way — **unpickling succeeds but predictions are wrong**.
+See `Setup-Windows.md` §3.
 
 ---
 
-## Danh sách đối chiếu khi thêm module mới
+## 8. Record trust assumptions, don't hide them
 
-- [ ] Model/LLM chỉ **báo cáo**; quyết định nằm ở server?
-- [ ] Mọi đường lỗi đều dẫn tới **từ chối**, không phải cho qua?
-- [ ] Có thứ gì hỏng được mà **không ai biết** không? Nếu có, chỗ nào hét lên?
-- [ ] Dữ liệu này đã tồn tại ở file config nào chưa?
-- [ ] Test chạy được trên máy **không** cài thư viện nặng chứ?
-- [ ] Tài nguyên (camera, kết nối, client) có **đúng một** chủ sở hữu chứ?
-- [ ] Sai interface thì lộ ra **lúc boot** hay lúc demo?
-- [ ] Có giả định tin cậy nào chưa được viết ra không?
+Every system has places where it must trust something. The principle is not to
+eliminate them — it is to **write them down**.
+
+- `pickle.load()` on `models/face_model.pkl` **executes code** from that file.
+  Anyone who can write to it controls the gateway process.
+- Write access to `command_schema.json` / `device_capabilities.json` is
+  equivalent to control over the authentication policy.
+- `FACE_REQUIRE_BLINK=false` lets a printed photo pass authentication.
+  `check_config()` warns when this is set.
+- Liveness is currently confirmed for the **whole frame**, not bound to a
+  specific face: a stranger could hold a printed photo of a member next to their
+  own face and blink themselves. Marked as a `TODO` in `recognize()`.
+- The project path must be pure ASCII — `dlib` and `OpenCV` are C++ libraries and
+  cannot open files through paths containing Vietnamese characters.
+
+A recorded assumption is an engineering decision. An unrecorded assumption is a
+vulnerability waiting to happen.
+
+---
+
+## Checklist when adding a module
+
+- [ ] Does the model/LLM only **report**, with the decision made server-side?
+- [ ] Does every error path lead to **denial** rather than passage?
+- [ ] Is there anything that can break **without anyone noticing**? If so, where
+      does it shout?
+- [ ] Does this data already exist in a config file?
+- [ ] Do the tests run on a machine **without** the heavy libraries?
+- [ ] Does every resource (camera, connection, client) have **exactly one** owner?
+- [ ] Would an interface mismatch surface **at boot** or during the demo?
+- [ ] Is there a trust assumption that hasn't been written down?

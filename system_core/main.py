@@ -28,6 +28,9 @@ import argparse
 import threading
 import time
 from typing import Any, Callable
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 from config import settings
 
@@ -79,11 +82,9 @@ class MainOrchestrator:
 
         # --- MODULES ---
         # serial_port rỗng = chế độ mô phỏng (không đụng MQTT). Giá trị chuỗi
-        # chỉ đóng vai trò công tắc: HardwareModule nói chuyện với Yolo:Bit
-        # qua Adafruit IO MQTT chứ không qua cổng Serial.
-        self.hardware_module = HardwareModule(
-            serial_port="mqtt" if self.hardware_mode == "real" else ""
-        )
+        # HardwareModule nói chuyện với Yolo:Bit qua Adafruit IO MQTT.
+        # "simulation" giữ trạng thái trong RAM và không chạm mạng.
+        self.hardware_module = HardwareModule(mode=self.hardware_mode)
 
         self.camera: Any = None         # VideoCapture đã mở sẵn (tùy chọn)
 
@@ -323,6 +324,13 @@ class MainOrchestrator:
     def stop(self) -> None:
         """Dừng vòng cảm biến (dùng khi thoát chương trình hoặc trong test)."""
         self._stop_event.set()
+
+        # Đóng kết nối MQTT. Không đóng thì luồng nền của paho còn sống và
+        # tiến trình không thoát hẳn.
+        try:
+            self.hardware_module.stop()
+        except Exception:
+            pass
 
     # =========================================================================
     # Hai đường vào: giọng nói và văn bản
@@ -708,8 +716,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(argv)
 
     orchestrator = MainOrchestrator(
-        # Chế độ text không cần STT -> mặc định dùng mock để khỏi tải model.
-        use_mock_stt=True if (args.mock_stt or not args.voice) else False,
+        # --mock-stt vẫn ép mock (để test nhanh), còn lại để settings quyết định.
+        # Model nạp lazy ở lần transcribe() đầu nên chế độ text không tốn gì.
+        use_mock_stt=True if args.mock_stt else None,
         use_mock_face=True if args.mock_face else None,
         hardware_mode="real" if args.real_hw else None,
     )

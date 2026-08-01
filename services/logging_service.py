@@ -306,8 +306,25 @@ class LoggingService:
                             )
                             ELSE completed_at
                         END,
+                        -- CHỈ tính khi latency_ms còn RỖNG.
+                        --
+                        -- started_at được đặt lúc INSERT, tức là SAU khi LLM đã
+                        -- trả lời xong. Phép trừ ở đây vì vậy chỉ đo phần việc
+                        -- CÒN LẠI sau LLM - vài mili giây.
+                        --
+                        -- Bản trước ghi đè vô điều kiện, nên con số đúng do
+                        -- CommandService truyền vào lúc INSERT (có cả thời gian
+                        -- gọi LLM) bị thay bằng con số nhỏ xíu. Hậu quả: dòng
+                        -- nào HOÀN TẤT thì latency sai, dòng nào KHÔNG hoàn tất
+                        -- (waiting_auth) lại giữ được số đúng:
+                        --     success       14 dòng  latency TB   14 ms  <- sai
+                        --     waiting_auth   2 dòng  latency TB 1264 ms  <- đúng
+                        --
+                        -- Những dòng cần trích dẫn nhất lại là những dòng sai.
                         latency_ms = CASE
-                            WHEN ? = 1 AND started_at IS NOT NULL
+                            WHEN ? = 1
+                                 AND latency_ms IS NULL
+                                 AND started_at IS NOT NULL
                             THEN CAST(
                                 (
                                     julianday(

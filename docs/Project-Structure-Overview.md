@@ -1,20 +1,23 @@
-# Tổng quan cấu trúc project YoloHome-AIoT
+# YoloHome-AIoT Project Structure Overview
 
-Project YoloHome-AIoT được tổ chức theo kiến trúc module hóa. Mỗi module phụ trách một phần riêng trong pipeline nhà thông minh đa phương thức:
+YoloHome-AIoT is organised as a modular architecture. Each module owns one stage
+of the multimodal smart-home pipeline:
 
 ```text
 Voice/Text Input
 → STT
 → LLM Command Parser
 → Validator / Safety Layer
-→ Face Auth nếu cần
+→ Face Auth (when required)
 → Command Service
 → Hardware Gateway
 → Database Logging
 → Flask Dashboard
 ```
 
-Mục tiêu là mỗi thành viên có thể phát triển module riêng nhưng vẫn tích hợp được thông qua cùng một JSON command schema, device registry và các service trung tâm.
+The goal is that each team member can develop their own module independently
+while still integrating through a shared JSON command schema, device registry and
+a common set of services.
 
 ---
 
@@ -32,14 +35,18 @@ YoloHome-AIoT/
 ├── database/
 ├── diagrams/
 ├── docs/
+├── models/          # face_model.pkl, model_env.json
 ├── modules/
+├── notebooks/       # Colab notebooks for Face Recognition training
 ├── services/
 ├── system_core/
 ├── tests/
+├── tools/           # measure_llm.py, probe_gemini.py, benchmark_llm.py
 └── web_dashboard/
 ```
 
-Các file runtime như `.env`, `venv/`, `.pytest_cache/`, `__pycache__/`, `database/yolohome.db`, model AI và dataset thật không nên commit lên GitHub.
+Runtime files such as `.env`, `venv/`, `.pytest_cache/`, `__pycache__/`,
+`database/yolohome.db`, and the real image dataset should not be committed.
 
 ---
 
@@ -56,11 +63,11 @@ config/
 └── language_aliases.json
 ```
 
-Folder này chứa cấu hình chung cho toàn hệ thống.
+System-wide configuration.
 
 ### `settings.py`
 
-Quản lý đường dẫn, biến môi trường và runtime config:
+Manages paths, environment variables and runtime configuration:
 
 ```text
 ROOT_DIR
@@ -73,19 +80,37 @@ DEVICE_CAPABILITIES_PATH
 DB_PATH
 SCHEMA_PATH
 PROMPT_TEMPLATE_PATH
+
 GEMINI_API_KEY
 GEMINI_MODEL
 USE_MOCK_LLM
+
+HARDWARE_MODE            # "simulation" | "real"
+ADAFRUIT_IO_USERNAME
+ADAFRUIT_IO_KEY
+
+USE_MOCK_FACE            # true -> MockFaceRecognizer; ANYONE can open the door
 FACE_AUTH_THRESHOLD
+FACE_REQUIRE_BLINK
+FACE_SCAN_TIMEOUT_SECONDS
+FACE_MODEL_PATH
+CAMERA_INDEX
+
+USE_MOCK_STT
+PHOWHISPER_MODEL
+VOICE_RECORD_SECONDS
 ```
 
-Các module khác nên import từ `config.settings` thay vì tự hard-code path.
+`check_config()` prints warnings at import time for settings that are
+technically valid but probably not what the user intended — for example
+`USE_MOCK_FACE` enabled, `face_model.pkl` missing, or `HARDWARE_MODE=real`
+without Adafruit credentials.
+
+Other modules should import from `config.settings` rather than hard-coding paths.
 
 ### `device_registry.json`
 
-Định nghĩa phòng, thiết bị và action được hỗ trợ thật.
-
-Ví dụ:
+Defines the rooms, devices and actions that are actually supported.
 
 ```json
 {
@@ -99,11 +124,11 @@ Ví dụ:
 }
 ```
 
-Validator dùng file này để kiểm tra command có được phép execute không.
+The validator uses this file to decide whether a command may execute.
 
 ### `command_schema.json`
 
-Định nghĩa contract JSON command mà LLM phải trả về:
+Defines the JSON command contract the LLM must return:
 
 ```text
 required_fields
@@ -113,36 +138,37 @@ valid_operators
 sensitive_actions
 ```
 
-File này giúp thống nhất output giữa LLM, validator, command service và dashboard.
+This keeps the output aligned across the LLM, validator, command service and
+dashboard.
 
 ### `language_aliases.json`
 
-Chứa alias tiếng Việt cho mock parser.
-
-Ví dụ:
+Vietnamese aliases for the mock parser, and — since slot grounding was
+introduced — for **server-side validation of every slot value**.
 
 ```text
 "phòng khách" → living_room
-"đèn" → light
-"bật" → turn_on
-"tắt" → turn_off
+"đèn"         → light
+"bật"         → turn_on
+"tắt"         → turn_off
+"có" / "ok"   → yes      (registry request confirmation)
+"không"       → no
 ```
 
-Nhờ đó có thể mở rộng alias mà không cần sửa logic parser trong Python.
+Aliases can therefore be extended without touching parser logic in Python.
 
-### `device_capabilities.json` và `capabilities.py`
+### `device_capabilities.json` and `capabilities.py`
 
-Định nghĩa capability và safety policy cho command factory.
-
-Ví dụ:
+Define capabilities and the safety policy used by the command factory.
 
 ```text
 switch       → turn_on / turn_off
 cover        → open / close
-entry_point  → open cần face_auth
+entry_point  → open requires face_auth
 ```
 
-`capabilities.py` đọc file JSON này và cung cấp helper để command factory/validator tra cứu policy.
+`capabilities.py` reads this JSON and exposes helpers for the command factory and
+validator to look up policy.
 
 ---
 
@@ -156,7 +182,7 @@ modules/
 └── speech_recognition/
 ```
 
-Folder này chứa các module kỹ thuật chính.
+The main technical modules.
 
 ---
 
@@ -171,30 +197,31 @@ modules/llm_integration/
 └── validator.py
 ```
 
-Module này biến câu lệnh tiếng Việt thành JSON command đã được validate.
+Turns a Vietnamese utterance into a validated JSON command.
 
 ### `llm_module.py`
 
-Nhiệm vụ chính:
+Responsibilities:
 
 ```text
 - Load device registry
 - Load command schema
-- Build prompt từ prompt_template.txt
-- Gọi Gemini hoặc mock parser
-- Extract JSON từ model response
-- Normalize command
-- Validate command
-- Trả về next_step cho CommandService
+- Build the prompt from prompt_template.txt
+- Call Gemini or the mock parser
+- Extract JSON from the model response
+- Normalize the command
+- Apply server-side safeguards (grounding, conflict resolution, unknown rooms)
+- Validate the command
+- Return next_step to CommandService
 ```
 
-Hàm quan trọng nhất:
+Main entry point:
 
 ```python
 parse_and_validate(transcript: str, sensor_data: dict | None = None, use_mock: bool | None = None) -> dict
 ```
 
-Output chuẩn gồm:
+Standard output fields:
 
 ```text
 ok
@@ -207,37 +234,40 @@ log_result
 error
 ```
 
-Module LLM không trực tiếp điều khiển phần cứng. Nó chỉ hiểu command và trả quyết định tiếp theo cho service layer.
+The LLM module never drives hardware directly. It only understands the command
+and hands the next decision to the service layer.
 
 ### `validator.py`
 
-Validator là safety gate trước khi command được execute.
-
-Nó kiểm tra:
+The safety gate before a command may execute. It checks:
 
 ```text
 - required fields
-- intent hợp lệ
-- room/device/action trong device_registry
-- condition của automation rule
-- sensitive action
+- valid intent
+- room/device/action present in device_registry
+- automation rule conditions
+- sensitive actions
 - capability safety policy
 ```
 
+`enforce_policy()` overrides `face_auth` in **both directions**, so an LLM
+claiming a sensitive action needs no authentication is overruled.
+
 ### `llm_strategy.py`
 
-Chứa implementation của Strategy Pattern cho LLM:
+The Strategy Pattern implementation for the LLM:
 
 ```text
 GeminiLLMStrategy
 MockLLMStrategy
 ```
 
-`CommandService` dùng `LLMStrategy` thay vì gọi trực tiếp Gemini.
+`CommandService` depends on `LLMStrategy` rather than calling Gemini directly.
 
 ### `prompt_template.txt`
 
-Prompt cho Gemini. Prompt yêu cầu model trả JSON only, dùng đúng registry, schema và context sensor hiện tại.
+The Gemini prompt. It requires JSON-only output, using the current registry,
+schema and sensor context.
 
 ---
 
@@ -249,15 +279,24 @@ modules/speech_recognition/
 └── stt_module.py
 ```
 
-Module này phụ trách Speech-to-Text. Output là transcript text để chuyển sang LLM pipeline.
-
-Ví dụ:
+Speech-to-Text. Output is a transcript passed on to the LLM pipeline.
 
 ```text
 audio input
 → "bật đèn phòng khách"
 → llm_module.parse_and_validate(...)
 ```
+
+`PhoWhisperSTT` loads its model **lazily** on the first `transcribe()` call
+(~10 s on CPU), then ~1.5 s for 4 s of audio.
+
+> **The transcript must carry Vietnamese diacritics.** Slot grounding matches
+> every `room` / `device` value against `language_aliases.json`, and those
+> aliases carry diacritics. An ASCII-folded transcript loses every slot. See
+> `docs/Integration-Contracts.md` Contract A.
+
+`ffmpeg` must be on PATH — without it `transcribe()` returns an empty string
+silently.
 
 ---
 
@@ -269,17 +308,28 @@ modules/face_recognition/
 └── face_module.py
 ```
 
-Module này xác thực khuôn mặt cho các command nhạy cảm như mở cửa chính.
+Recognises faces for sensitive commands such as opening the main door. It only
+recognises and reports confidence — it does **not** decide whether to allow the
+action.
 
-Output đề xuất:
+Output per Contract B:
 
 ```python
 {
-    "person_name": "member_1",
-    "confidence": 0.91,
-    "authorized": True
+    "person_name": "member_1",   # None if no HOUSEHOLD MEMBER was recognised
+    "confidence": 0.91,          # in [0.0, 1.0]
 }
 ```
+
+> **Do not return an `authorized` flag.** The authorization decision belongs to
+> `AuthService`, because the threshold is server configuration. If the module
+> returns such a flag, `AuthService` deliberately ignores it — trusting it would
+> let a swapped-in model grant itself permission. See `Design-Principles.md` §1.
+
+The `Unknown` label from the training set is **never** returned as an identity:
+`"Unknown"` is a truthy string, so the rule
+`bool(person_name) and confidence >= threshold` would open the door at exactly
+the moment the model correctly identifies a stranger.
 
 ---
 
@@ -291,13 +341,23 @@ modules/hardware_gateway/
 └── hardware_module.py
 ```
 
-Module này là adapter giữa backend Python và thiết bị thật như Yolo:Bit, Serial, MQTT hoặc Adafruit IO.
+The adapter between the Python backend and Yolo:Bit over Adafruit IO MQTT. The
+system uses **no serial port** anywhere.
 
-API cấp cao nên là:
+High-level API:
 
 ```python
-execute_command(command: dict) -> dict
+HardwareModule(mode="simulation" | "real")
+
+execute_command(command: dict) -> dict     # {"status": "success"|"error", "state"?: ...}
+read_sensors() -> dict                      # 4 CONTRACT keys: temperature, humidity, light, motion
+poll_sensors() -> dict                      # read then notify observers — the rule engine's heartbeat
 ```
+
+Command feeds are keyed by `(room, device, action)`, one feed per room. A key
+without `room` would make "turn on the bedroom light" and "turn on the living
+room light" publish to the same feed. Details in
+`docs/Integration-Contracts.md` Contract C.
 
 ---
 
@@ -309,34 +369,39 @@ services/
 ├── auth_service.py
 ├── command_service.py
 ├── logging_service.py
-└── rule_service.py
+├── rule_service.py
+└── session_service.py
 ```
 
-Folder này chứa business logic và orchestration giữa các module.
+Business logic and orchestration between modules.
 
 ### `command_service.py`
 
-Điều phối command pipeline.
-
-Vai trò chính:
+Drives the command pipeline:
 
 ```text
-- Nhận transcript
-- Gọi LLMStrategy để parse + validate
-- Route theo next_step
-- Tạo Command object bằng command factory
-- Execute command qua HardwareReceiver
-- Lưu command history để undo nếu cần
-- Ghi log command lifecycle
+- Receive the transcript
+- Handle Yes/No confirmations server-side, before any LLM call
+- Call LLMStrategy to parse + validate
+- Route by next_step
+- Build a Command object via the command factory
+- Execute it through the HardwareReceiver
+- Keep command history for undo
+- Log the command lifecycle
 ```
 
 ### `auth_service.py`
 
-Quản lý flow xác thực. Service này gọi face module và quyết định command có được execute tiếp không.
+The face authentication gate. It receives the handoff from `CommandService`
+(`next_step="auth_required"`), compares confidence against
+`FACE_AUTH_THRESHOLD`, and only then calls `execute_authorized_command()`. It is
+also responsible for closing the `command_log` row and writing `face_log`.
+
+It **does not acquire the frame itself** — the orchestrator supplies it.
 
 ### `logging_service.py`
 
-Ghi log vào SQLite:
+Writes to SQLite:
 
 ```text
 command_log
@@ -348,11 +413,20 @@ schedule
 
 ### `rule_service.py`
 
-Quản lý automation rule như:
+Manages automation rules such as:
 
 ```text
-nếu nhiệt độ > 30 thì bật quạt phòng khách
+nếu nhiệt độ trên 30 độ thì bật quạt phòng khách
 ```
+
+Rules are edge-triggered with hysteresis, so a value oscillating around the
+threshold does not spam commands.
+
+### `session_service.py`
+
+Holds multi-turn conversation state: the pending command awaiting clarification,
+and separately any pending registry request awaiting a Yes/No answer. Both have a
+TTL; only the former counts against `SESSION_MAX_TURNS`.
 
 ---
 
@@ -362,16 +436,17 @@ nếu nhiệt độ > 30 thì bật quạt phòng khách
 system_core/
 ├── __init__.py
 ├── commands.py
+├── contracts.py
 ├── main.py
-├── observer.py
+├── observers.py
 └── strategies.py
 ```
 
-Folder này chứa core abstraction và design pattern.
+Core abstractions and design patterns.
 
 ### `strategies.py`
 
-Định nghĩa Strategy interface:
+Strategy interfaces:
 
 ```text
 STTStrategy
@@ -380,7 +455,7 @@ LLMStrategy
 
 ### `commands.py`
 
-Định nghĩa Command Pattern:
+Command Pattern:
 
 ```text
 Command
@@ -393,19 +468,31 @@ HardwareReceiver
 create_device_command()
 ```
 
-### `observer.py`
+### `observers.py`
 
-Định nghĩa Observer Pattern nếu sensor/hardware flow cần publish event:
+Observer Pattern for the sensor data flow:
 
 ```text
-Subject
-Observer
-SensorSubject
+Subject                  # HardwareModule inherits from this
+Observer                 # interface
+RuleObserver             # the link from sensors to automation rules
+SensorLoggingObserver    # in-memory history for the dashboard
+SensorPersistObserver    # writes sensor_log to SQLite, rate-limited
 ```
+
+`RuleObserver` is the **link that used to be missing**:
+`RuleService.evaluate_sensor_data()` was called from nowhere, so rules stored in
+the database never fired the fan — with no error and no log.
+
+### `contracts.py`
+
+Checks interface contracts at startup: the `LLMStrategy` signature, the presence
+of `execute_command()` on the hardware receiver, and the shape of `get_status`
+results. Mismatches surface at boot rather than mid-demo.
 
 ### `main.py`
 
-Entry point hoặc orchestrator chính của hệ thống.
+The system entry point and orchestrator.
 
 ---
 
@@ -417,12 +504,10 @@ database/
 ├── init_db.py
 ├── schema.sql
 ├── README_DB.md
-└── yolohome.db   # runtime file, không commit
+└── yolohome.db   # runtime file, not committed
 ```
 
-Database dùng SQLite.
-
-Các bảng chính:
+SQLite. Main tables:
 
 ```text
 command_log
@@ -433,17 +518,15 @@ error_log
 automation_rules
 ```
 
-Chi tiết schema nằm trong:
-
-```text
-database/README_DB.md
-```
-
-Chạy khởi tạo DB:
+Schema details are in `database/README_DB.md`.
 
 ```bash
 python -m database.init_db
 ```
+
+The schema uses `CREATE TABLE IF NOT EXISTS`, so it is idempotent — adding a new
+**table** applies automatically, but adding a **column** to an existing table
+does not. That case needs `ALTER TABLE` or a database reset.
 
 ---
 
@@ -457,9 +540,7 @@ web_dashboard/
 └── static/
 ```
 
-Flask dashboard dùng để hiển thị pipeline và log.
-
-Các tab chính:
+Flask dashboard for viewing the pipeline and logs. Main tabs:
 
 ```text
 Agent Console
@@ -475,17 +556,25 @@ Face Auth Log
 tests/
 ├── db/
 ├── llm/
+├── modules/
+│   ├── face/          # test_face_module_contract.py + manual tool test_face.py
+│   ├── llm/           # slot grounding, suggestions, failure responses, registry confirmation
+│   └── stt/           # manual tool test_stt.py
 ├── pattern/
 ├── service/
+├── services/          # test_auth_service.py
 ├── test_config.py
+├── test_main_orchestrator.py
 └── test_runtime_config.py
 ```
 
-Test được nhóm theo module hoặc kiến trúc.
+> **Two kinds of file live under `tests/`.** Automated tests contain `assert`
+> statements and run offline. Manual tools (`test_face.py`, `test_stt.py`) need a
+> webcam or microphone and a person operating them — they keep every heavy
+> dependency inside `main()` and set `__test__ = False`, otherwise pytest imports
+> them and turns the whole suite red on a machine without dlib.
 
 ### `tests/llm/`
-
-Kiểm tra:
 
 ```text
 - prompt building
@@ -496,40 +585,46 @@ Kiểm tra:
 - capability validation
 ```
 
-### `tests/pattern/`
+### `tests/modules/llm/`
 
-Kiểm tra:
+```text
+- slot grounding (rejecting values the user never said)
+- suggestion filtering (never suggest an option that doesn't exist)
+- failure responses (a failed command must not sound successful)
+- room/device name collision
+- registry request confirmation flow
+```
+
+### `tests/pattern/`
 
 ```text
 - Command Pattern
 - Strategy Pattern
 - Command factory
-- execute / undo behavior
+- execute / undo behaviour
 ```
 
 ### `tests/db/`
-
-Kiểm tra:
 
 ```text
 - database schema
 - sensor logging
 ```
 
-### `tests/service/`
-
-Kiểm tra:
+### `tests/service/` and `tests/services/`
 
 ```text
 - command pipeline
-- command service behavior
+- command service behaviour
+- AuthService (offline, injected fake logging service)
 ```
-
-Chạy toàn bộ test:
 
 ```bash
 python -m pytest -q
 ```
+
+The entire suite runs offline: no dlib, no webcam, no microphone, no API key, no
+hardware.
 
 ---
 
@@ -538,16 +633,25 @@ python -m pytest -q
 ```text
 docs/
 ├── Project-Structure-Overview.md
-└── LLM-Command-Strategy-Overview.md
+├── LLM-Command-Strategy-Overview.md
+├── Integration-Contracts.md
+├── Design-Principles.md
+├── Module-Responsibilities.md
+├── Face-Recognition.md
+├── Setup-Windows.md
+└── Console-Test-Checklist.md
 ```
 
-### `Project-Structure-Overview.md`
-
-Tổng quan cấu trúc folder, vai trò module và luồng tích hợp.
-
-### `LLM-Command-Strategy-Overview.md`
-
-Tài liệu riêng cho LLM command pipeline, Strategy Pattern và Command Pattern.
+| File | Contents |
+|---|---|
+| `Project-Structure-Overview.md` | Folder layout, module roles, integration flows |
+| `LLM-Command-Strategy-Overview.md` | LLM pipeline, Strategy Pattern, Command Pattern |
+| `Integration-Contracts.md` | The three seams: STT→LLM, LLM→Face Auth, LLM→Hardware |
+| `Design-Principles.md` | The eight principles governing how the system is written |
+| `Module-Responsibilities.md` | Who owns which file, and the boundaries not to cross |
+| `Face-Recognition.md` | Model training and runtime inference |
+| `Setup-Windows.md` | Ten traps encountered while setting up on Windows |
+| `Console-Test-Checklist.md` | Manual test scenarios through the console |
 
 ---
 
@@ -561,13 +665,13 @@ diagrams/
 └── StrategyPattern.png
 ```
 
-Chứa sơ đồ kiến trúc và design pattern dùng cho báo cáo.
+Architecture and design pattern diagrams used in the report.
 
 ---
 
-## 11. Các luồng chính
+## 11. Main flows
 
-### Luồng 1: Điều khiển bằng text/voice
+### Flow 1 — text/voice control
 
 ```text
 speech_recognition/stt_module.py
@@ -581,32 +685,43 @@ speech_recognition/stt_module.py
 → web_dashboard/app.py
 ```
 
-### Luồng 2: Command cần xác thực khuôn mặt
+### Flow 2 — a command requiring face authentication
 
 ```text
 User: "mở cửa chính"
-→ LLM trả command face_auth=true
-→ Validator xác nhận door.open là sensitive action
-→ CommandService trả next_step=auth_required
-→ AuthService/FaceModule xác thực
-→ execute_authorized_command()
-→ HardwareGateway execute
-→ LoggingService ghi command_log + face_log
+→ LLM returns a command with face_auth=true
+→ Validator confirms door.open is a sensitive action
+→ CommandService returns next_step=auth_required
+→ MainOrchestrator.capture_frame() opens the camera, waits for a blink,
+  returns a clean frame
+→ AuthService.authorize_and_execute(result, frame) compares the threshold
+→ execute_authorized_command() is called ONLY when authorized
+→ LoggingService writes command_log + face_log
 ```
 
-### Luồng 3: Automation rule
+### Flow 3 — automation rules
 
 ```text
 User: "nếu nhiệt độ trên 30 độ thì bật quạt phòng khách"
-→ LLM trả intent=create_rule
-→ Validator kiểm tra condition
-→ RuleService lưu automation rule
-→ LoggingService ghi command_log
+→ LLM returns intent=create_rule
+→ Validator checks the condition
+→ RuleService stores the automation rule
+→ LoggingService writes command_log
+```
+
+Later, on every sensor poll:
+
+```text
+HardwareModule.poll_sensors()
+→ notify(sensor_data)
+→ RuleObserver.update()
+→ RuleService.evaluate_sensor_data()   (edge-triggered)
+→ CommandService.execute_authorized_command()
 ```
 
 ---
 
-## 12. Ownership gợi ý
+## 12. Suggested ownership
 
 ### LLM owner
 
@@ -617,6 +732,7 @@ config/language_aliases.json
 config/device_capabilities.json
 config/capabilities.py
 tests/llm/
+tests/modules/llm/
 tests/pattern/test_command_strategy_patterns.py
 ```
 
@@ -625,6 +741,7 @@ tests/pattern/test_command_strategy_patterns.py
 ```text
 modules/speech_recognition/
 system_core/strategies.py
+tests/modules/stt/
 ```
 
 ### Face owner
@@ -632,6 +749,10 @@ system_core/strategies.py
 ```text
 modules/face_recognition/
 services/auth_service.py
+notebooks/face_recognition/
+models/face_model.pkl
+tests/modules/face/
+tests/services/test_auth_service.py
 ```
 
 ### Hardware owner
@@ -639,6 +760,7 @@ services/auth_service.py
 ```text
 modules/hardware_gateway/
 system_core/commands.py
+system_core/observers.py
 ```
 
 ### Database/System owner
@@ -648,6 +770,8 @@ database/
 services/logging_service.py
 services/rule_service.py
 services/command_service.py
+services/session_service.py
+system_core/main.py
 ```
 
 ### Dashboard owner
@@ -660,17 +784,20 @@ static/
 
 ---
 
-## 13. Design Pattern summary
+## 13. Design pattern summary
 
 ### Strategy Pattern
 
 ```text
 LLMStrategy / STTStrategy
-→ GeminiLLMStrategy / MockLLMStrategy / future STT strategy
-→ CommandService dùng strategy qua interface
+→ GeminiLLMStrategy / MockLLMStrategy / PhoWhisperSTT / MockSTTStrategy
+→ CommandService uses the strategy through the interface
 ```
 
-Mục tiêu: thay đổi model AI mà không sửa logic điều phối.
+Purpose: swap the AI model without touching orchestration logic.
+
+Remove it and `CommandService` depends directly on Gemini, forcing tests to make
+real API calls.
 
 ### Command Pattern
 
@@ -682,7 +809,9 @@ LLM JSON command
 → HardwareReceiver
 ```
 
-Mục tiêu: chuẩn hóa hành động thiết bị thành object command, dễ execute, undo và log.
+Purpose: turn device actions into objects that are easy to execute, undo and log.
+
+Remove it and there is no undo.
 
 ### Observer Pattern
 
@@ -692,4 +821,8 @@ Subject
 → Observer.update(sensor_data)
 ```
 
-Mục tiêu: hỗ trợ sensor event flow nếu phần hardware/rule cần publish dữ liệu cảm biến.
+Purpose: one sensor loop feeds several consumers (rules, logging, persistence)
+without them knowing about each other.
+
+Remove it and adding a new consumer of sensor data means modifying
+`HardwareModule`.

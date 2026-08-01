@@ -12,23 +12,27 @@ services/auth_service.py, vì ngưỡng là cấu hình phía server.
 
 Xem hợp đồng đầy đủ: docs/Integration-Contracts.md (Contract B).
 
-HAI RÀNG BUỘC KIẾN TRÚC CỦA FILE NÀY
-------------------------------------
+BA RÀNG BUỘC KIẾN TRÚC CỦA FILE NÀY
+-----------------------------------
 1. PHỤ THUỘC NẶNG ĐƯỢC IMPORT BÊN TRONG HÀM.
    cv2 / face_recognition (dlib) / numpy KHÔNG được import ở đầu file.
    FaceRecognizer, MockFaceRecognizer và SvmFaceRecognizer._as_identity()
    đều không cần chúng, nhưng lại được test suite dùng - mà test suite của
    nhóm phải chạy offline trên máy không cài dlib.
-   Đổi lại, hệ thống thật nạp sẵn các thư viện này lúc boot trong
-   MainOrchestrator._wire_face_auth(), nên lần nhận diện đầu tiên không bị
-   khựng và lỗi thiếu thư viện vẫn lộ ra ngay khi khởi động.
 
-2. MODULE NÀY KHÔNG SỞ HỮU CAMERA.
-   Contract B: orchestrator mở cv2.VideoCapture một lần lúc boot và truyền
-   xuống qua tham số `cap`. Nếu module tự mở camera thì sẽ có hai chỗ tranh
-   nhau webcam - trên Windows, chỗ thứ hai nhận về frame None và Face Auth
-   luôn từ chối. Đường `cap=None` (tự mở, tự đóng) chỉ dành cho
-   tools/test_face.py chạy độc lập.
+2. CAMERA ĐƯỢC MỞ THEO YÊU CẦU, KHÔNG GIỮ SẴN.
+   MainOrchestrator gắn capture_frame() vào frame_capturer và gọi mỗi lần cần
+   xác thực; camera mở ra rồi đóng lại ngay trong một lần quét. Nhờ vậy webcam
+   rảnh khi hệ thống không quét - OBS, Zoom hay phần mềm quay màn hình vẫn
+   dùng được trong lúc demo.
+   Tham số `cap` cho phép người gọi tự sở hữu VideoCapture (test, hoặc ngữ
+   cảnh cần tái sử dụng kết nối). Khi truyền cap, NGƯỜI GỌI chịu trách nhiệm
+   đóng nó.
+
+3. QUY TẮC QUYẾT ĐỊNH PHẢI KHỚP VỚI NOTEBOOK HUẤN LUYỆN.
+   Notebook đánh giá bằng argmax(predict_proba). recognize() cũng phải dùng
+   đúng cách đó, nếu không con số accuracy trong evaluation_metrics.txt không
+   mô tả hành vi đang chạy. Xem chú thích trong recognize().
 """
 
 from __future__ import annotations
@@ -97,6 +101,11 @@ class MockFaceRecognizer(FaceRecognizer):
     """
     Recognizer giả cho test/demo offline. Không cần camera hay model.
 
+    CẢNH BÁO AN NINH: mặc định LUÔN nhận ra "member_1" với confidence 0.95,
+    nghĩa là BẤT KỲ AI cũng qua được xác thực. Bật USE_MOCK_FACE=true chỉ để
+    kiểm tra đường ống khi chưa có face_model.pkl - check_config() cảnh báo mỗi
+    lần khởi động.
+
     Cho phép ép sẵn kết quả để test cả nhánh authorized lẫn denied:
         MockFaceRecognizer("member_1", 0.91)   -> qua ngưỡng 0.80
         MockFaceRecognizer(None, 0.0)           -> no_face
@@ -136,7 +145,7 @@ class SvmFaceRecognizer(FaceRecognizer):
     #
     # Chuỗi "Unknown" là truthy. Nghĩa là khi SVM nhận diện CHÍNH XÁC rằng đây
     # là người lạ (confidence 0.93), cửa sẽ MỞ: đúng model, đúng ngưỡng, sai
-    # kiểu dữ liệu. Xem tests/module/test_face_module_contract.py.
+    # kiểu dữ liệu. Xem tests/modules/face/test_face_module_contract.py.
     REJECT_LABELS = {"unknown", "stranger", "other", "nguoi_la", "nguoi la"}
 
     def __init__(self, model_path: Path | None = None) -> None:
@@ -203,10 +212,25 @@ class SvmFaceRecognizer(FaceRecognizer):
         encoding = np.array(face_encodings[0]).reshape(1, -1)
 
         try:
-            name = self.clf.predict(encoding)[0]
+            # DÙNG argmax(predict_proba), KHÔNG dùng predict().
+            #
+            # Với SVC(probability=True), hai thứ đó có thể cho kết quả KHÁC
+            # NHAU: predict() dựa trên hàm quyết định one-vs-one, còn
+            # predict_proba() dựa trên Platt scaling được hiệu chỉnh bằng một
+            # vòng cross-validation riêng. Tài liệu sklearn cảnh báo rõ điều này.
+            #
+            # Nếu predict() trả lớp A trong khi argmax xác suất là lớp B thì
+            # confidence lấy được là proba[A] - KHÔNG phải giá trị lớn nhất -
+            # nên có thể tụt dưới ngưỡng dù model khá chắc chắn.
+            #
+            # Notebook huấn luyện đánh giá bằng argmax(predict_proba). Dùng
+            # predict() ở đây nghĩa là con số 95.83% trong evaluation_metrics.txt
+            # không mô tả hành vi đang chạy.
             probabilities = self.clf.predict_proba(encoding)[0]
-            class_index = list(self.clf.classes_).index(name)
-            confidence = probabilities[class_index]
+            best_index = int(np.argmax(probabilities))
+
+            name = self.clf.classes_[best_index]
+            confidence = probabilities[best_index]
 
             return self._as_identity(name, confidence)
         except Exception:
@@ -276,12 +300,14 @@ def capture_frame(
     """
     Quét khuôn mặt từ camera, hỗ trợ liveness detection (chớp mắt).
 
+    Hàm đọc NHIỀU frame trong một lần gọi - chớp mắt không thể phát hiện bằng
+    một khung hình duy nhất. Frame trả về là khung hình sạch ngay tại thời điểm
+    điều kiện được thỏa.
+
     Args:
-        cap: đối tượng cv2.VideoCapture do NGƯỜI GỌI sở hữu. Đây là đường dùng
-            trong hệ thống thật (Contract B): MainOrchestrator mở camera một lần
-            lúc boot và truyền vào đây, nên chỉ có đúng một chỗ giữ webcam.
-            Truyền None thì hàm tự mở và tự đóng camera - CHỈ dùng cho
-            tools/test_face.py chạy độc lập.
+        cap: đối tượng cv2.VideoCapture do NGƯỜI GỌI sở hữu và chịu trách nhiệm
+            đóng. Truyền None (mặc định) thì hàm tự mở và tự đóng camera - đây
+            là đường dùng trong hệ thống thật, giúp webcam rảnh khi không quét.
         timeout_seconds: hết thời gian mà chưa đạt điều kiện -> trả None.
         require_blink: bắt buộc chớp mắt trước khi chấp nhận khung hình.
             Chống tấn công bằng ảnh in hoặc video phát trên điện thoại.
@@ -370,8 +396,8 @@ def capture_frame(
                 cv2.waitKey(1000)
             break
 
-    # Chỉ đóng camera nếu CHÍNH HÀM NÀY mở nó. Đóng camera của orchestrator sẽ
-    # làm mọi lần xác thực sau đó thất bại mà không rõ nguyên nhân.
+    # Chỉ đóng camera nếu CHÍNH HÀM NÀY mở nó. Đóng camera của người khác sẽ
+    # làm mọi lần dùng sau đó thất bại mà không rõ nguyên nhân.
     if owns_capture:
         cap.release()
     if show_window:
