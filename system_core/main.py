@@ -28,6 +28,9 @@ import argparse
 import threading
 import time
 from typing import Any, Callable
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 from config import settings
 
@@ -79,11 +82,9 @@ class MainOrchestrator:
 
         # --- MODULES ---
         # serial_port rỗng = chế độ mô phỏng (không đụng MQTT). Giá trị chuỗi
-        # chỉ đóng vai trò công tắc: HardwareModule nói chuyện với Yolo:Bit
-        # qua Adafruit IO MQTT chứ không qua cổng Serial.
-        self.hardware_module = HardwareModule(
-            serial_port="mqtt" if self.hardware_mode == "real" else ""
-        )
+        # HardwareModule nói chuyện với Yolo:Bit qua Adafruit IO MQTT.
+        # "simulation" giữ trạng thái trong RAM và không chạm mạng.
+        self.hardware_module = HardwareModule(mode=self.hardware_mode)
 
         self.camera: Any = None         # VideoCapture đã mở sẵn (tùy chọn)
 
@@ -119,14 +120,10 @@ class MainOrchestrator:
         # Import lazy vì auth_service kéo theo face_module -> cv2 + dlib.
         # Để ở cấp module thì máy chưa cài 2 thư viện đó sẽ không import nổi
         # main.py, và toàn bộ test suite gãy ngay từ bước collect.
-        if self.face_module is not None:
-            from services.auth_service import AuthService
-
-            self.auth_service = AuthService(
-                self.command_service,
-                recognizer=self.face_module,
-                threshold=self.face_threshold,
-            )
+        # KHÔNG dựng AuthService ở đây - xem property auth_service bên dưới.
+        # Dựng sẵn một lần sẽ ĐÓNG BĂNG tham chiếu tới face_module và
+        # command_service tại thời điểm khởi tạo.
+        self._auth_service_override: Any = None
 
         # --- OBSERVER PATTERN ---
         # BẮT BUỘC. Thiếu dòng này thì automation rule hỏng ÂM THẦM:
@@ -158,6 +155,56 @@ class MainOrchestrator:
     # Lắp ráp module ngoài (Contract A và B)
     # =========================================================================
 
+    # =========================================================================
+    # AuthService - dẫn xuất, không lưu sẵn
+    # =========================================================================
+
+    @property
+    def auth_service(self) -> Any:
+        """
+        Cổng xác thực khuôn mặt, gắn với face_module HIỆN TẠI.
+
+        VÌ SAO LÀ PROPERTY CHỨ KHÔNG PHẢI THUỘC TÍNH THƯỜNG
+        ---------------------------------------------------
+        face_module là NGUỒN SỰ THẬT DUY NHẤT cho "hệ thống đang dùng
+        recognizer nào". AuthService chỉ là lớp bọc quanh nó cộng với ngưỡng.
+
+        Dựng sẵn AuthService trong __init__ sẽ đóng băng tham chiếu: gán
+        orchestrator.face_module = X sau đó thì AuthService VẪN xác thực bằng
+        recognizer cũ, âm thầm và không có gì báo. Dựng theo yêu cầu thì hai
+        thứ không thể lệch nhau.
+
+        Chi phí gần bằng 0: AuthService không mở kết nối, không nạp gì, chỉ giữ
+        vài tham chiếu.
+
+        Gán tường minh (orchestrator.auth_service = X) vẫn hoạt động và được ưu
+        tiên tuyệt đối - dùng cho test và cho việc thay bằng cài đặt khác.
+        """
+        if self._auth_service_override is not None:
+            return self._auth_service_override
+
+        if self.face_module is None:
+            return None
+
+        try:
+            from services.auth_service import AuthService
+        except (Exception, SystemExit) as exc:
+            log_error("gateway", f"AuthService unavailable: {exc}")
+            return None
+
+        # Truyền bằng TÊN THAM SỐ, không dùng vị trí. Chữ ký thật là
+        # (face_recognizer, command_service, ...); gọi theo vị trí sẽ đưa
+        # command_service vào chỗ face_recognizer.
+        return AuthService(
+            face_recognizer=self.face_module,
+            command_service=self.command_service,
+            threshold=self.face_threshold,
+        )
+
+    @auth_service.setter
+    def auth_service(self, value: Any) -> None:
+        self._auth_service_override = value
+
     def _build_stt(self) -> Any:
         """
         Dựng engine STT. Trả None nếu không dùng được -> process_voice_command
@@ -170,7 +217,11 @@ class MainOrchestrator:
             from modules.speech_recognition.stt_module import (
                 MockSTTStrategy, PhoWhisperSTT,
             )
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # BẮT CẢ SystemExit: thư viện bên thứ ba có thể gọi quit()/sys.exit()
+            # lúc import khi thiếu phụ thuộc. SystemExit kế thừa BaseException
+            # chứ KHÔNG kế thừa Exception, nên `except Exception` để nó lọt qua
+            # và cả gateway thoát giữa lúc boot. Xem chú thích ở _build_face().
             print(f"[STT] Cannot import stt_module: {exc}")
             log_error("stt", f"import failed: {exc}")
             return None
@@ -195,7 +246,24 @@ class MainOrchestrator:
             from modules.face_recognition.face_module import (
                 MockFaceRecognizer, SvmFaceRecognizer, capture_frame,
             )
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # BẮT CẢ SystemExit là BẮT BUỘC ở đây, không phải phòng xa.
+            #
+            # face_recognition gọi quit() khi thiếu gói face_recognition_models:
+            #     try:
+            #         import face_recognition_models
+            #     except Exception:
+            #         print("Please install `face_recognition_models`...")
+            #         quit()
+            #
+            # quit() ném SystemExit, vốn kế thừa BaseException chứ KHÔNG kế thừa
+            # Exception. Chỉ bắt Exception thì nó lọt qua và CẢ GATEWAY THOÁT
+            # giữa lúc boot - toàn bộ thiết kế fail soft bị vô hiệu bởi đúng một
+            # lời gọi quit() trong thư viện bên thứ ba. Đã gặp thật khi dựng môi
+            # trường; xem docs/Setup-Windows.md §5 và §9.
+            #
+            # KHÔNG dùng `except BaseException`: nó nuốt luôn KeyboardInterrupt
+            # và Ctrl+C sẽ không dừng được chương trình.
             print(f"[FaceID] Cannot import face_module: {exc}")
             print("         (missing dlib/face_recognition, or the empty"
                   " face_recognition/ folder at repo root shadows the library)")
@@ -208,7 +276,8 @@ class MainOrchestrator:
 
         try:
             recognizer = SvmFaceRecognizer()
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # Cùng lý do: dlib có thể thoát tiến trình khi thiếu file .dat.
             print(f"[FaceID] Cannot load models/face_model.pkl: {exc}")
             print("         Face Auth will DENY every door command.")
             log_error("face", f"load model failed: {exc}")
@@ -216,9 +285,14 @@ class MainOrchestrator:
 
         # Contract B: orchestrator sở hữu việc lấy khung hình. capture_frame()
         # tự mở/đóng camera mỗi lần quét nên không giữ webcam khi rảnh.
+        # CAMERA_INDEX phải được truyền xuống, nếu không nó là cấu hình chết:
+        # có trong settings.py mà không dòng nào đọc, người dùng đổi giá trị thì
+        # không có gì thay đổi và cũng không có gì báo. Webcam nằm ở index 1 là
+        # chuyện hay gặp khi máy có OBS, Zoom hoặc DroidCam.
         self.frame_capturer = lambda: capture_frame(
             timeout_seconds=settings.FACE_SCAN_TIMEOUT_SECONDS,
             require_blink=settings.FACE_REQUIRE_BLINK,
+            camera_index=settings.CAMERA_INDEX,
         )
 
         print(f"[FaceID] REAL mode - blink={settings.FACE_REQUIRE_BLINK}, "
@@ -250,6 +324,13 @@ class MainOrchestrator:
     def stop(self) -> None:
         """Dừng vòng cảm biến (dùng khi thoát chương trình hoặc trong test)."""
         self._stop_event.set()
+
+        # Đóng kết nối MQTT. Không đóng thì luồng nền của paho còn sống và
+        # tiến trình không thoát hẳn.
+        try:
+            self.hardware_module.stop()
+        except Exception:
+            pass
 
     # =========================================================================
     # Hai đường vào: giọng nói và văn bản
@@ -352,6 +433,21 @@ class MainOrchestrator:
 
         try:
             if self.camera is not None:
+                if settings.FACE_REQUIRE_BLINK:
+                    # Đường self.camera chỉ grab MỘT frame nên không thể phát
+                    # hiện chớp mắt. Cấu hình đang YÊU CẦU liveness mà lại đi
+                    # đường này nghĩa là chống giả mạo đã bị vô hiệu - và không
+                    # có gì khác báo ra: Face Auth vẫn chạy, vẫn nhận diện, chỉ
+                    # là một tấm ảnh in cũng qua được.
+                    #
+                    # Thuộc tính tên `camera` trông đúng là chỗ tự nhiên để đặt
+                    # một VideoCapture vào, nên cái bẫy này rất dễ sập.
+                    log_error(
+                        "gateway",
+                        "self.camera được dùng khi FACE_REQUIRE_BLINK=true: "
+                        "liveness KHÔNG chạy, ảnh in có thể qua được xác thực.",
+                    )
+
                 ok, frame = self.camera.read()
                 return frame if ok else None
 
@@ -620,8 +716,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(argv)
 
     orchestrator = MainOrchestrator(
-        # Chế độ text không cần STT -> mặc định dùng mock để khỏi tải model.
-        use_mock_stt=True if (args.mock_stt or not args.voice) else False,
+        # --mock-stt vẫn ép mock (để test nhanh), còn lại để settings quyết định.
+        # Model nạp lazy ở lần transcribe() đầu nên chế độ text không tốn gì.
+        use_mock_stt=True if args.mock_stt else None,
         use_mock_face=True if args.mock_face else None,
         hardware_mode="real" if args.real_hw else None,
     )

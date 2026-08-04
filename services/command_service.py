@@ -5,7 +5,11 @@ from collections import deque
 from typing import Any
 
 from modules.llm_integration.llm_module import (
+    detect_confirmation,
     device_display_name,
+    failure_response,
+    load_device_registry,
+    missing_slot_question,
     room_display_name,
     state_display_name,
 )
@@ -197,6 +201,17 @@ class CommandService:
         """
         start_time = time.time()
 
+        # Câu trả lời Có/Không cho một yêu cầu đăng ký được xử lý NGAY, KHÔNG
+        # gọi LLM. Đây là dữ liệu có cấu trúc, không phải ngôn ngữ cần diễn
+        # giải - và dữ liệu thật cho thấy đưa nó qua model thì cùng chữ "có"
+        # ra ba kết quả khác nhau. Xử lý sớm còn tiết kiệm một lượt gọi API.
+        confirmation_result = self._handle_registry_confirmation(
+            transcript,
+            session_id,
+        )
+        if confirmation_result is not None:
+            return confirmation_result
+
         pending_command = self.session_service.get_pending(session_id)
 
         llm_result = self.llm_strategy.parse_and_validate(
@@ -308,16 +323,49 @@ class CommandService:
             execution_status = "rejected"
 
         elif next_step == "registry_request":
-            result_status = "waiting_admin_review"
+            # CHƯA phải waiting_admin_review. Dòng này mới chỉ là "bot đã hỏi",
+            # người dùng chưa đồng ý gì cả.
+            #
+            # Trước đây mọi lần nhắc tới một phòng lạ đều tạo một dòng
+            # waiting_admin_review, nên hàng đợi của quản trị viên đầy những
+            # yêu cầu không ai xác nhận:
+            #     (1893, 'có',      'registry_request', 'waiting_admin_review')
+            #     (1902, 'nhà bếp', 'registry_request', 'waiting_admin_review')
+            result_status = "registry_request: awaiting_confirmation"
             execution_status = "registry_request"
             response_text = command.get("response") or (
                 "Yêu cầu đăng ký phòng hoặc thiết bị mới đang chờ quản trị viên xem xét."
             )
 
+            self.session_service.set_pending_registry(
+                session_id,
+                {
+                    "room": command.get("room"),
+                    "device": command.get("device"),
+                    "action": command.get("action"),
+                    "command_id": command_id,
+                },
+            )
+
         else:
             result_status = llm_result.get("log_result") or "fail: validation"
             execution_status = "failed"
-            error_message = error_message or response_text
+
+            # KHÔNG được dùng lại command["response"] ở đây.
+            #
+            # Trường đó do LLM sinh ra TRƯỚC khi server validate, nên nó luôn
+            # mang giọng thành công: "Đã bật đèn ở cửa chính." Trả lại câu đó
+            # cho người dùng nghĩa là hệ thống khẳng định đã làm một việc chưa
+            # hề xảy ra - trong log ghi execution_status="failed", còn người
+            # dùng nghe "đã bật".
+            #
+            # Server soạn lại từ mã lỗi của validator, và kèm luôn những lựa
+            # chọn CHẮC CHẮN TỒN TẠI trong device_registry.
+            validation = llm_result.get("validation") or {}
+            response_text = failure_response(command, validation)
+            error_message = (
+                error_message or validation.get("message") or response_text
+            )
 
         # Vòng đời phiên hội thoại.
         # clarify -> nhánh phía trên đã set_pending, không đụng vào nữa.
@@ -377,6 +425,81 @@ class CommandService:
             "session_id": session_id,
             # True -> UI nên chờ user trả lời câu hỏi làm rõ.
             "awaiting_reply": self.session_service.get_pending(session_id) is not None,
+        }
+
+    def _handle_registry_confirmation(
+        self,
+        transcript: str,
+        session_id: str | None,
+    ) -> dict[str, Any] | None:
+        """
+        Xử lý câu trả lời Có/Không cho yêu cầu đăng ký đang chờ.
+
+        Trả None nếu không áp dụng (không có yêu cầu chờ, hoặc câu này không
+        phải lời đồng ý/từ chối) - khi đó pipeline chạy bình thường.
+
+        KHÔNG gọi LLM và KHÔNG tạo dòng command_log mới: nó CẬP NHẬT đúng dòng
+        đã tạo lúc bot đặt câu hỏi. Một yêu cầu, một dòng, trạng thái phản ánh
+        quyết định của người dùng.
+        """
+        pending_registry = self.session_service.get_pending_registry(session_id)
+        if not pending_registry:
+            return None
+
+        answer = detect_confirmation(transcript)
+        if answer is None:
+            # Người dùng trả lời bằng chuyện khác ("phòng khách") -> để pipeline
+            # xử lý bình thường. Yêu cầu đăng ký bị bỏ qua, không hỏi lại.
+            self.session_service.clear_registry(session_id)
+            return None
+
+        self.session_service.clear_registry(session_id)
+        self.session_service.touch(session_id)
+
+        command_id = int(pending_registry.get("command_id") or -1)
+        room = pending_registry.get("room")
+        device = pending_registry.get("device")
+
+        if answer == "yes":
+            result_status = "waiting_admin_review"
+            room_name = room_display_name(room) if room else "phòng mới"
+            response_text = (
+                f"Đã ghi nhận yêu cầu thêm {room_name} vào hệ thống. "
+                "Quản trị viên sẽ xem xét."
+            )
+        else:
+            result_status = "registry_request: cancelled_by_user"
+            response_text = "Đã huỷ yêu cầu đăng ký."
+
+        if command_id > 0:
+            try:
+                update_command_result(
+                    command_id=command_id,
+                    result=result_status,
+                    execution_status="registry_request",
+                )
+            except Exception as exc:
+                log_error("gateway", f"update registry request failed: {exc}")
+
+        # Hội thoại chưa xong: nếu vẫn còn câu lệnh dở dang thì hỏi tiếp ngay,
+        # thay vì bắt người dùng nói lại từ đầu.
+        pending_command = self.session_service.get_pending(session_id)
+        if pending_command:
+            response_text = (
+                f"{response_text} "
+                f"{missing_slot_question(pending_command, load_device_registry())}"
+            )
+
+        return {
+            "command_id": command_id,
+            "ok": True,
+            "next_step": "registry_confirmed" if answer == "yes" else "registry_cancelled",
+            "response": response_text,
+            "execution_status": "registry_request",
+            "result": result_status,
+            "command": None,
+            "session_id": session_id,
+            "awaiting_reply": pending_command is not None,
         }
 
     def create_command(self, command_data: dict[str, Any]) -> Command:

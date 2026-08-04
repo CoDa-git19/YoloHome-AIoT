@@ -40,6 +40,18 @@ class SessionService:
         # session_id -> {"command": dict, "updated_at": float, "turns": int}
         self._sessions: dict[str, dict[str, Any]] = {}
 
+        # session_id -> {"payload": dict, "updated_at": float}
+        #
+        # TÁCH RIÊNG khỏi _sessions có chủ đích. Yêu cầu đăng ký đang chờ người
+        # dùng trả lời Có/Không là một trạng thái KHÁC với câu lệnh đang chờ
+        # làm rõ: nó không được tính vào SESSION_MAX_TURNS.
+        #
+        # Dữ liệu thật cho thấy vì sao: cả hai lần chạm giới hạn lượt đều do
+        # câu đồng ý, không phải do câu lệnh mơ hồ.
+        #     (1892, 'ok', 'failed', 'fail: clarify_limit')
+        #     (1904, 'ok', 'failed', 'fail: clarify_limit')
+        self._registries: dict[str, dict[str, Any]] = {}
+
     # =========================================================================
     # Read
     # =========================================================================
@@ -103,6 +115,21 @@ class SessionService:
             "turns": turns + 1,
         }
 
+    def touch(self, session_id: str | None) -> None:
+        """
+        Làm mới TTL mà KHÔNG tăng số lượt.
+
+        Dùng khi người dùng vừa trả lời Có/Không cho một yêu cầu đăng ký:
+        hội thoại vẫn đang sống, nhưng lượt đó không phải một lần hỏi lại nên
+        không được tiêu vào SESSION_MAX_TURNS.
+        """
+        if not session_id:
+            return
+
+        entry = self._sessions.get(session_id)
+        if entry is not None and not self._is_expired(entry):
+            entry["updated_at"] = time.time()
+
     def clear(self, session_id: str | None) -> None:
         """Xoá phiên. Gọi khi lệnh đã hoàn tất hoặc bị từ chối."""
         if session_id:
@@ -110,6 +137,51 @@ class SessionService:
 
     def clear_all(self) -> None:
         self._sessions.clear()
+        self._registries.clear()
+
+    # =========================================================================
+    # Yêu cầu đăng ký đang chờ xác nhận
+    # =========================================================================
+
+    def set_pending_registry(
+        self,
+        session_id: str | None,
+        payload: dict[str, Any],
+    ) -> None:
+        """
+        Ghi nhớ yêu cầu đăng ký vừa hỏi người dùng, để lượt sau xử lý câu
+        trả lời Có/Không.
+
+        payload nên chứa: room, device, action, command_id - đủ để cập nhật
+        đúng dòng command_log khi người dùng quyết định.
+        """
+        if not session_id:
+            return
+
+        self._registries[session_id] = {
+            "payload": dict(payload),
+            "updated_at": time.time(),
+        }
+
+    def get_pending_registry(self, session_id: str | None) -> dict[str, Any] | None:
+        """Yêu cầu đăng ký đang chờ xác nhận, hoặc None nếu không có/hết hạn."""
+        if not session_id:
+            return None
+
+        entry = self._registries.get(session_id)
+        if entry is None:
+            return None
+
+        if self._is_expired(entry):
+            self.clear_registry(session_id)
+            return None
+
+        return dict(entry["payload"])
+
+    def clear_registry(self, session_id: str | None) -> None:
+        """Xoá yêu cầu đăng ký đang chờ. Gọi sau khi người dùng đã trả lời."""
+        if session_id:
+            self._registries.pop(session_id, None)
 
     # =========================================================================
     # Internal

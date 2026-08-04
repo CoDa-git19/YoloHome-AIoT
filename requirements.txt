@@ -1,41 +1,174 @@
-# --- Web & API Server ---
+# =============================================================================
+# YoloHome-AIoT — phụ thuộc Python
+# =============================================================================
+#
+# CÀI BẰNG LỆNH NÀY, KHÔNG PHẢI LỆNH THÔNG THƯỜNG:
+#
+#     pip install --no-deps -r requirements.txt
+#
+# VÌ SAO CẦN --no-deps
+# --------------------
+# Gói `face-recognition` khai báo phụ thuộc `dlib`. Bản `dlib` trên PyPI là mã
+# nguồn: pip sẽ cố biên dịch, cần CMake + Visual Studio Build Tools, mất 15-20
+# phút và thường thất bại. Ta dùng `dlib-bin` (cùng thư viện, đã build sẵn),
+# nhưng pip coi đó là một gói KHÁC TÊN nên vẫn đi tải bản nguồn.
+#
+# --no-deps chặn chuyện đó. Đổi lại, file này phải liệt kê ĐẦY ĐỦ cả cây phụ
+# thuộc - và nó có đủ. Danh sách dựng từ một môi trường đã kiểm chứng chạy được.
+#
+# Môi trường tham chiếu: Windows 11, Python 3.14.2, ngày 2026-07-29.
+#
+# BA THỨ FILE NÀY KHÔNG CÀI ĐƯỢC
+# ------------------------------
+# 1. ffmpeg          -> winget install Gyan.FFmpeg   (STT cần)
+# 2. File .dat ~130MB của face_recognition_models    (xem docs/Setup-Windows.md)
+# 3. Đường dẫn dự án phải TOÀN KÝ TỰ ASCII           (dlib/OpenCV là C++)
+#
+# Đọc docs/Setup-Windows.md trước khi cài. Chín cái bẫy, mỗi cái đã tốn thật.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Web / cấu hình
+# -----------------------------------------------------------------------------
 Flask==3.0.3
+Werkzeug==3.1.8
+blinker==1.9.0
+click==8.4.2
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
 python-dotenv==1.0.1
 
-# --- Hardware & IoT ---
-pyserial==3.5
-paho-mqtt==1.6.1
-schedule==1.2.1
-adafruit-io==2.8.0
 
-# --- Face Recognition Module ---
-opencv-python==4.9.0.80
-dlib>=19.24.6
-face_recognition==1.3.0
-scikit-learn==1.4.1.post1
-numpy==1.26.4
-
-# --- Speech Recognition Module ---
-# YÊU CẦU HỆ THỐNG: cần ffmpeg trên PATH (KHÔNG cài được qua pip).
-#   Windows: winget install Gyan.FFmpeg      (hoặc choco install ffmpeg)
-#   Linux  : sudo apt-get install ffmpeg
-#   macOS  : brew install ffmpeg
-# Thiếu ffmpeg thì PhoWhisperSTT.transcribe() trả "" IM LẶNG, không báo lỗi.
-soundfile==0.12.1
-torch==2.0.0
-transformers==4.38.0
-sounddevice==0.5.5
-
-# Chưa dùng tới:
-# ctranslate2==4.1.0   # cho hướng faster-whisper (hiện dùng transformers)
-# librosa              # stt_module đọc audio bằng soundfile + ffmpeg
-
-# --- LLM Integration ---
-# QUAN TRỌNG: pin đúng version đang chạy được trên máy bạn.
-# Chạy: pip freeze | grep google-genai   rồi thay số bên dưới.
-# Không pin -> mỗi người cài một version khác nhau, và API của SDK này
-# thay đổi khá nhanh (response_schema, thinking_config...).
+# -----------------------------------------------------------------------------
+# LLM — Google Gemini
+# -----------------------------------------------------------------------------
 google-genai==2.11.0
+google-auth==2.56.2
+pydantic==2.13.4
+pydantic_core==2.46.4
+annotated-types==0.8.0
+typing-inspection==0.4.2
+tenacity==9.1.4
+websockets==16.1.1
 
-# --- Testing ---
-pytest
+
+# -----------------------------------------------------------------------------
+# Nền tính toán
+#
+# numpy PHẢI là 2.x. Ghim numpy 1.x không có wheel cho Python 3.14, pip sẽ build
+# bằng MinGW và cho ra bản mà chính numpy cảnh báo "CRASHES ARE TO BE EXPECTED".
+#
+# Nâng numpy SAU khi cài các gói khác gây lỗi sai ABI:
+#     AttributeError: _ARRAY_API not found
+# Cài tất cả trong MỘT lệnh thì không gặp.
+# -----------------------------------------------------------------------------
+numpy==2.5.1
+scipy==1.17.1
+
+
+# -----------------------------------------------------------------------------
+# Speech-to-Text — PhoWhisper
+#
+# torch 2.13 là bản đầu tiên có wheel cho Python 3.14 (cp314). Ghim torch==2.0.0
+# sẽ khiến pip build từ nguồn và treo rất lâu.
+#
+# CẦN THÊM ffmpeg trên PATH. Thiếu nó thì transcribe() trả chuỗi rỗng IM LẶNG,
+# nhìn như model không nghe được gì.
+# -----------------------------------------------------------------------------
+torch==2.13.0
+transformers==5.14.1
+tokenizers==0.22.2
+huggingface_hub==1.26.0
+safetensors==0.8.0
+hf_xet==1.5.2
+typer==0.27.0
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+shellingham==1.5.4
+annotated-doc==0.0.5
+regex==2026.7.19
+sounddevice==0.5.5
+soundfile==0.12.1
+cffi==2.1.0
+pycparser==3.0
+sympy==1.14.0
+mpmath==1.3.0
+networkx==3.6.1
+fsspec==2026.7.0
+filelock==3.32.0
+
+
+# -----------------------------------------------------------------------------
+# Face Recognition
+#
+# dlib-bin: cùng thư viện với dlib nhưng đã build sẵn. LƯU Ý: sau khi cài,
+# `pip freeze` hiển thị nó là `dlib==20.0.1` chứ không phải `dlib-bin`. Đừng chép
+# dòng đó ngược vào đây - pip sẽ đi tải bản nguồn về build.
+#
+# setuptools PHẢI < 81: face_recognition_models dùng pkg_resources, đã bị gỡ
+# khỏi setuptools 81. torch kéo về setuptools 83 nên phải ghim đè.
+#
+# scikit-learn >= 1.5 vì numpy 2.x. Phiên bản này phải KHỚP với bản dùng để
+# train models/face_model.pkl - pickle lệch bản có thể unpickle thành công
+# nhưng dự đoán sai.
+# -----------------------------------------------------------------------------
+dlib-bin==20.0.1
+face-recognition==1.3.0
+face_recognition_models==0.3.0
+opencv-python==5.0.0.93
+scikit-learn==1.9.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+pillow==12.3.0
+setuptools==80.10.2
+
+
+# -----------------------------------------------------------------------------
+# Phần cứng / MQTT
+#
+# KHÔNG dùng adafruit-io: gói đó dùng ez_setup.py (2014) -> tải setuptools 4.0.1
+# -> cần distutils, đã bị gỡ khỏi Python 3.12. Không cài được và không sửa được.
+# Đẩy dữ liệu lên Adafruit IO qua MQTT (paho-mqtt) thay cho REST.
+# -----------------------------------------------------------------------------
+paho-mqtt==1.6.1
+pyserial==3.5
+schedule==1.2.1
+
+
+# -----------------------------------------------------------------------------
+# Test
+# -----------------------------------------------------------------------------
+pytest==9.1.1
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.20.0
+packaging==26.2
+
+
+# -----------------------------------------------------------------------------
+# Phụ thuộc gián tiếp
+#
+# Có mặt vì --no-deps: pip không tự kéo về nữa nên phải liệt kê tường minh.
+# -----------------------------------------------------------------------------
+anyio==4.14.2
+certifi==2026.7.22
+charset-normalizer==3.4.9
+colorama==0.4.6
+cryptography==49.0.0
+distro==1.9.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+narwhals==2.24.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+PyYAML==6.0.3
+requests==2.34.2
+sniffio==1.3.1
+tqdm==4.70.0
+typing_extensions==4.16.0
+urllib3==2.7.0

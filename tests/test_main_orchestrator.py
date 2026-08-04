@@ -228,6 +228,14 @@ def orchestrator(tmp_path, monkeypatch):
     monkeypatch.setattr(init_db_module, "DB_PATH", test_db)
     monkeypatch.setattr(logging_service_module, "DB_PATH", test_db)
     monkeypatch.setattr(rule_service_module, "DB_PATH", test_db)
+    # 3. Face/STT module thật - __init__ gọi _build_face() nạp
+    #    models/face_model.pkl (~vài giây unpickle) và _build_stt() import
+    #    torch. Máy chưa cài dlib hoặc chưa có file model sẽ đi một đường
+    #    KHÁC HẲN, nên test trở nên phụ thuộc vào máy đang chạy.
+    #    Mọi test dưới đây tự gán face_module giả nên hai module thật này
+    #    không được dùng tới lần nào.
+    monkeypatch.setattr(MainOrchestrator, "_build_face", lambda self: None)
+    monkeypatch.setattr(MainOrchestrator, "_build_stt", lambda self: None)
 
     orch = MainOrchestrator()
     orch.latest_sensor_data = {"temperature": 25.0}
