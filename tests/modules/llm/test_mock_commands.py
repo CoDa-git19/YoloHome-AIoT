@@ -126,7 +126,12 @@ def test_unknown_room_and_device_creates_registry_request():
     assert result["command"]["intent"] == "registry_request"
     assert result["command"]["action"] is None
     assert result["command"]["device"] is None
-    assert result["command"]["room"] is None
+
+    # HỢP ĐỒNG ĐÃ ĐỔI: yêu cầu đăng ký phải mang theo thứ CẦN đăng ký.
+    # Trước đây cả ba slot đều None nên command_log chỉ còn transcript thô,
+    # quản trị viên đọc bảng không biết phải thêm gì:
+    #     (1902, 'nhà bếp', 'registry_request', 'waiting_admin_review')
+    assert result["command"]["room"] == "kitchen"
 
 
 def test_create_rule_success():

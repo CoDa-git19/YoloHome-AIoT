@@ -107,6 +107,12 @@
       "camera": "camera",
       "speaker": "loa",
       "curtain": "rèm cửa"
+    },
+    "actions": {
+      "turn_on": "bật",
+      "turn_off": "tắt",
+      "open": "mở",
+      "close": "đóng"
     }
   },
   "conditions": {
@@ -176,6 +182,38 @@
       "thì",
       "hãy",
       "sẽ"
+    ]
+  },
+  "confirmations": {
+    "yes": [
+      "có",
+      "ừ",
+      "ừa",
+      "ok",
+      "oke",
+      "okay",
+      "đồng ý",
+      "vâng",
+      "dạ",
+      "được",
+      "đúng rồi",
+      "chắc chắn",
+      "làm đi",
+      "gửi đi",
+      "đăng ký đi"
+    ],
+    "no": [
+      "không",
+      "ko",
+      "khong",
+      "thôi",
+      "khỏi",
+      "đừng",
+      "hủy",
+      "huỷ",
+      "bỏ qua",
+      "không cần",
+      "thôi khỏi"
     ]
   }
 }
