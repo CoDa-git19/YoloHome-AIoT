@@ -337,6 +337,29 @@ def room_display_name(room: str | None) -> str:
     return DISPLAY_NAMES.get("rooms", {}).get(room, "phòng")
 
 
+def sensor_display_name(sensor: str | None) -> str:
+    """
+    Tên tiếng Việt của một cảm biến ("temperature" -> "nhiệt độ").
+
+    Lấy alias ĐẦU TIÊN trong config/language_aliases.json -> conditions.sensors,
+    theo quy ước alias đầy đủ nhất đứng trước. Không có thì trả lại chính khoá,
+    để câu vẫn đọc được thay vì rỗng.
+    """
+    aliases = CONDITION_ALIASES.get("sensors", {}).get(sensor or "", [])
+    return aliases[0] if aliases else (sensor or "")
+
+
+def operator_display_name(operator: str | None) -> str:
+    """
+    Cách đọc một toán tử so sánh (">" -> "trên").
+
+    Cùng nguồn với sensor_display_name. Nhờ vậy câu hỏi xác nhận nói đúng thứ
+    tiếng người dùng vừa dùng, thay vì in ra ký hiệu toán học.
+    """
+    aliases = CONDITION_ALIASES.get("operators", {}).get(operator or "", [])
+    return aliases[0] if aliases else (operator or "")
+
+
 def action_display_name(action: str | None) -> str:
     """
     Động từ tiếng Việt cho một action ("turn_on" -> "bật").
@@ -1690,7 +1713,25 @@ def build_response_schema(
                 "required": ["sensor", "operator", "value"],
             },
             "response": {"type": "STRING"},
+            # PHẢI khai báo ở đây, không chỉ trong prompt.
+            #
+            # response_schema RÀNG BUỘC model đúng danh sách properties này -
+            # đó là điểm mạnh của structured output (model không bịa được
+            # trường lạ), nhưng cũng có nghĩa: trường nào không khai báo thì bị
+            # LOẠI BỎ dù model có sinh ra.
+            #
+            # Quan sát được khi thêm luồng "hỗ trợ một phần": prompt đã dạy
+            # model gắn "unsupported", model nhiều khả năng có gắn, nhưng
+            # parse_and_validate() luôn nhận về None. Triệu chứng còn tệ hơn
+            # trước khi sửa: model chuyển từ "reject kèm lý do đúng" sang
+            # "create_rule bỏ im lặng mệnh đề hẹn giờ".
+            "unsupported": {
+                "type": "STRING",
+                "nullable": True,
+            },
         },
+        # KHÔNG đưa "unsupported" vào required: phần lớn câu lệnh không có gì
+        # bị bỏ, ép model luôn trả trường này là mời nó bịa ra.
         "required": sorted(command_schema.get("required_fields", [])),
     }
 

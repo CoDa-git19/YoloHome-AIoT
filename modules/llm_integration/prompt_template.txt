@@ -11,6 +11,11 @@ You must follow these rules:
 - If the command is ambiguous or missing required information, return intent = "clarify".
 - If the command mentions a room/device/action that is not in the device registry but sounds like a user wants to add it, return intent = "registry_request".
 - If the command is unsafe, impossible, or invalid, return intent = "reject".
+- If PART of the command is something this system cannot do (a delay, a
+  schedule, a duration, a repetition) but the REST is a valid command, do NOT
+  reject the whole utterance. Return the valid part as usual, and set
+  "unsupported" to a short Vietnamese phrase naming what you had to drop.
+  Reject outright only when nothing usable remains.
 - Các hành động nhạy cảm SAU ĐÂY bắt buộc face_auth = true:
 {sensitive_actions}
 - Hệ thống sẽ tự ép lại face_auth theo policy, nên đừng bịa giá trị này.
@@ -39,7 +44,8 @@ Output JSON object must contain exactly these fields:
     "operator": "một trong: {valid_operators}",
     "value": number
   },
-  "response": "short Vietnamese response"
+  "response": "short Vietnamese response",
+  "unsupported": null or "short Vietnamese phrase naming the dropped part"
 }
 
 Examples:
@@ -82,6 +88,23 @@ Output:
     "value": 30
   },
   "response": "Đã tạo luật: nếu nhiệt độ trên 30 độ thì bật quạt phòng khách."
+}
+
+Input: "sau 5 phút nếu nhiệt độ trên 30 thì bật quạt phòng ngủ"
+Output:
+{
+  "intent": "create_rule",
+  "action": "turn_on",
+  "device": "fan",
+  "room": "bedroom",
+  "face_auth": false,
+  "condition": {
+    "sensor": "temperature",
+    "operator": ">",
+    "value": 30
+  },
+  "response": "Đã tạo luật: nếu nhiệt độ trên 30 độ thì bật quạt phòng ngủ.",
+  "unsupported": "hẹn giờ 5 phút"
 }
 
 Input: "bật cái đó lên"
