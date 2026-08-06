@@ -1,22 +1,31 @@
 """
 Web Dashboard (Flask).
 
-Đây là một "gateway" nhẹ nhúng thẳng CommandService/AuthService/RuleService
-thật (cùng những class main.py dùng), để nút Send trên Agent Console chạy
-qua đúng pipeline STT->LLM->Validation->FaceAuth->Execution và ghi log thật
-vào database/yolohome.db (theo database/schema.sql).
+Giao diện web cho gateway YoloHome-AIoT. Toàn bộ pipeline thật
+(STT -> LLM -> Validation -> Face Auth -> Execution) chạy qua đây và ghi log
+thật vào database/yolohome.db theo database/schema.sql.
 
-Không có STT/camera thật trong ngữ cảnh web, nên:
-- "STT" chỉ là text nhập tay (fallback).
-- Face Auth dùng MockFaceRecognizer (không có khung hình camera thật).
+VÌ SAO DÙNG LẠI MainOrchestrator THAY VÌ TỰ LẮP RÁP
+---------------------------------------------------
+Bản trước tự dựng lại CommandService/AuthService/RuleService/observers ngay
+trong file này - tức là một bản sao song song của system_core/main.py. Hai bản
+lắp ráp cho cùng một hệ thống chắc chắn sẽ trôi lệch, và nó đã xảy ra thật:
+AuthService đổi chữ ký thành (face_recognizer, command_service, ...) thì
+main.py cập nhật theo, còn dashboard vẫn gọi AuthService(command_service) và
+hỏng ngay từ lúc import.
+
+MainOrchestrator là "cổng vào duy nhất" theo thiết kế. Dashboard chỉ nên là
+một lớp vỏ HTTP quanh nó, không phải người lắp ráp thứ hai.
+
+Dashboard vẫn gọi handle_transcript() ở mức có cấu trúc (thay vì
+process_text_command() trả về chuỗi), vì UI cần command JSON, trạng thái từng
+bước pipeline và latency - những thứ một chuỗi trả lời không mang theo được.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +34,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 from config import settings
 from database.init_db import init_db
 from modules.llm_integration.llm_module import load_device_registry
-from services.auth_service import AuthService
-from services.command_service import CommandService, MockHardwareModule
-from services.rule_service import RuleService
-from system_core.observers import RuleObserver
+from system_core.main import MainOrchestrator
 
 app = Flask(__name__)
 
@@ -44,50 +50,73 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
+# Face Auth trong ngữ cảnh web chạy HEADLESS: không mở cửa sổ OpenCV.
+#
+# capture_frame() mặc định gọi cv2.imshow(), nhưng ở đây nó sẽ chạy trong
+# thread worker của Flask chứ không phải main thread. GUI của OpenCV không an
+# toàn khi gọi ngoài main thread (trên Windows có thể treo hẳn request).
+# Người dùng đã có phản hồi trạng thái ngay trên dashboard nên cửa sổ đó thừa.
+FACE_SHOW_WINDOW = False
+
+
 # =============================================================================
-# Wire pipeline thật (mirrors system_core/main.py, nhúng trong tiến trình Flask)
+# Gateway: một MainOrchestrator duy nhất cho cả tiến trình Flask
 # =============================================================================
 
-rule_service = RuleService()
-# Giữ một reference kiểu cụ thể (MockHardwareModule), thay vì đọc lại qua
-# command_service.hardware_module - vốn được khai kiểu HardwareReceiver
-# (Protocol chỉ có execute_command), nên sẽ thiếu attach/read_sensors/poll_sensors
-# dưới con mắt type checker dù runtime luôn là MockHardwareModule.
-hardware_module = MockHardwareModule()
-command_service = CommandService(
-    rule_service=rule_service,
-    hardware_module=hardware_module,
-    use_mock=settings.USE_MOCK_LLM,
+orchestrator = MainOrchestrator()
+
+# Vòng đọc cảm biến = nhịp tim của automation rule. Không chạy thì rule đã lưu
+# trong database sẽ không bao giờ kích hoạt.
+_sensor_thread = threading.Thread(
+    target=orchestrator.start_sensor_loop,
+    daemon=True,
 )
-auth_service = AuthService(command_service)
-# CommandExecutor Protocol names its parameter "command",
-# CommandService.execute_authorized_command names it "command_data"; every
-# call site in the codebase passes it positionally, so this is a harmless
-# structural-typing mismatch, not a runtime bug.
-hardware_module.attach(RuleObserver(rule_service, command_service))  # type: ignore[arg-type]
-
-_latest_sensor_data: dict[str, Any] = hardware_module.read_sensors()
-_sensor_lock = threading.Lock()
-
-
-def _sensor_loop() -> None:
-    global _latest_sensor_data
-    while True:
-        try:
-            data = hardware_module.poll_sensors()
-            with _sensor_lock:
-                _latest_sensor_data = data
-        except Exception as exc:  # pragma: no cover - background loop safety net
-            print(f"[web_dashboard] sensor loop error: {exc}")
-        time.sleep(3)
-
-
-_sensor_thread = threading.Thread(target=_sensor_loop, daemon=True)
 _sensor_thread.start()
+
+# Pipeline chạy tuần tự: một lệnh có thể mất tới FACE_SCAN_TIMEOUT_SECONDS
+# (quét khuôn mặt) hoặc vài giây (STT). Không khoá thì hai request song song sẽ
+# tranh nhau camera và micro. Endpoint trạng thái/log KHÔNG giữ khoá này nên
+# dashboard vẫn cập nhật bình thường trong lúc chờ.
+_pipeline_lock = threading.Lock()
+
+
+def _install_headless_frame_capturer() -> None:
+    """
+    Thay frame_capturer của orchestrator bằng bản không mở cửa sổ.
+
+    _build_face() chỉ gán frame_capturer ở chế độ face THẬT. Ở chế độ mock nó
+    để None, mà AuthService lại từ chối khi frame=None (fail closed) - nghĩa là
+    USE_MOCK_FACE=true sẽ chặn mọi lệnh mở cửa. Mock recognizer bỏ qua hoàn
+    toàn tham số frame, nên ở đúng chế độ đó ta đưa một frame giả để đường ống
+    chạy được. Đây KHÔNG phải lỗ hổng: mock vốn đã tự nhận mọi khuôn mặt, và
+    check_config() cảnh báo mỗi lần khởi động.
+    """
+    if orchestrator.face_module is None:
+        return
+
+    if settings.USE_MOCK_FACE:
+        orchestrator.frame_capturer = lambda: "mock-frame"
+        return
+
+    try:
+        from modules.face_recognition.face_module import capture_frame
+    except (Exception, SystemExit) as exc:
+        print(f"[web_dashboard] cannot import capture_frame: {exc}")
+        return
+
+    orchestrator.frame_capturer = lambda: capture_frame(
+        timeout_seconds=settings.FACE_SCAN_TIMEOUT_SECONDS,
+        require_blink=settings.FACE_REQUIRE_BLINK,
+        camera_index=settings.CAMERA_INDEX,
+        show_window=FACE_SHOW_WINDOW,
+    )
+
+
+_install_headless_frame_capturer()
 
 
 def device_state(device: str, room: str) -> str | None:
-    result = hardware_module.execute_command(
+    result = orchestrator.hardware_module.execute_command(
         {"device": device, "room": room, "action": "get_status"}
     )
     return result.get("state")
@@ -121,10 +150,55 @@ def face_auth_log_page():
 # API: Trạng thái thiết bị / cảm biến / kết nối (sidebar + top metrics)
 # =============================================================================
 
+def _module_status() -> dict[str, Any]:
+    """
+    Tình trạng THẬT của từng module, để dashboard nói rõ cái gì đang chạy.
+
+    Không có phần này thì các chế độ hỏng đều trông giống nhau trên UI: thiếu
+    face_model.pkl, thiếu ffmpeg, hay đang chạy mock - tất cả chỉ hiện ra dưới
+    dạng "lệnh mở cửa bị từ chối" mà không ai biết vì sao.
+    """
+    stt_ready = orchestrator.stt_engine is not None
+    if not stt_ready:
+        stt_mode = "unavailable"
+    elif orchestrator.use_mock_stt:
+        stt_mode = "mock"
+    else:
+        stt_mode = "real"
+
+    face_ready = orchestrator.face_module is not None
+    if not face_ready:
+        face_mode = "unavailable"
+    elif orchestrator.use_mock_face:
+        face_mode = "mock"
+    else:
+        face_mode = "real"
+
+    return {
+        "stt": {
+            "ready": stt_ready,
+            "mode": stt_mode,
+            "model": settings.PHOWHISPER_MODEL if stt_mode == "real" else None,
+        },
+        "face": {
+            "ready": face_ready,
+            "mode": face_mode,
+            # Thiếu model là nguyên nhân phổ biến nhất khiến Face Auth tắt.
+            "model_present": settings.FACE_MODEL_PATH.exists(),
+            "require_blink": settings.FACE_REQUIRE_BLINK,
+            "threshold": settings.FACE_AUTH_THRESHOLD,
+        },
+        "llm": {
+            "mode": "mock" if orchestrator.use_mock_llm else "gemini",
+            "model": None if orchestrator.use_mock_llm else settings.GEMINI_MODEL,
+        },
+        "hardware": {"mode": orchestrator.hardware_mode},
+    }
+
+
 @app.route('/api/status')
 def api_status():
-    with _sensor_lock:
-        sensors = dict(_latest_sensor_data)
+    sensors = dict(orchestrator.latest_sensor_data or {})
 
     devices = {
         "light": device_state("light", "living_room") or "off",
@@ -132,11 +206,17 @@ def api_status():
         "door": device_state("door", "main_door") or "closed",
     }
 
-    adafruit_connected = bool(settings.ADAFRUIT_IO_USERNAME and settings.ADAFRUIT_IO_KEY)
+    # Ở chế độ mô phỏng KHÔNG có kết nối Adafruit nào cả. Báo "connected" chỉ
+    # vì .env có sẵn username/key là nói dối người xem dashboard.
+    adafruit_connected = (
+        orchestrator.hardware_mode == "real"
+        and bool(settings.ADAFRUIT_IO_USERNAME and settings.ADAFRUIT_IO_KEY)
+    )
 
     return jsonify({
         "sensors": sensors,
         "devices": devices,
+        "modules": _module_status(),
         "connections": {
             "gateway": _sensor_thread.is_alive(),
             "adafruit": adafruit_connected,
@@ -184,6 +264,7 @@ def _build_pipeline_payload(
     result: dict[str, Any],
     command_row: dict[str, Any] | None,
     face_row: dict[str, Any] | None,
+    source: str = "text",
 ) -> dict[str, Any]:
     command = result.get('command') or {}
     requires_auth = bool(command.get('face_auth'))
@@ -204,20 +285,29 @@ def _build_pipeline_payload(
         ),
     }
 
+    # face_log.status theo schema: authorized | denied | no_face | timeout.
+    # Ánh xạ sang câu giải thích được, vì action_result chỉ là "rejected" -
+    # không cho biết bị từ chối vì người lạ, vì thiếu model, hay vì hết giờ.
+    face_reasons = {
+        "authorized": "Đã xác thực thành công.",
+        "denied": "Độ tin cậy dưới ngưỡng cho phép - từ chối.",
+        "no_face": "Không lấy được khuôn mặt (camera, model, hoặc hết thời gian chờ).",
+        "timeout": "Hết thời gian chờ xác thực.",
+    }
+
     if not requires_auth:
-        face_step = {"status": "skipped", "detail": "Not required for this command."}
+        face_step = {"status": "skipped", "detail": "Lệnh này không cần xác thực."}
     elif face_row is not None:
-        authorized = face_row.get('status') == 'authorized'
+        face_status = str(face_row.get('status') or '')
+        authorized = face_status == 'authorized'
         face_step = {
             "status": "passed" if authorized else "failed",
             "person_name": face_row.get('person_name'),
             "confidence": face_row.get('confidence'),
-            "detail": face_row.get('action_result') or (
-                "Access granted." if authorized else "Access denied."
-            ),
+            "detail": face_reasons.get(face_status, "Xác thực không thành công."),
         }
     else:
-        face_step = {"status": "pending", "detail": "Waiting for face authentication."}
+        face_step = {"status": "pending", "detail": "Đang chờ xác thực khuôn mặt."}
 
     if execution_status in ("pending", "waiting_auth", "clarify", "registry_request"):
         execution_state = "pending"
@@ -244,23 +334,81 @@ def _build_pipeline_payload(
     }
 
     pipeline = {
-        "stt": {"status": "done"},
+        "stt": {
+            "status": "done",
+            "source": source,
+            # PhoWhisper không trả về điểm tin cậy, và ở chế độ nhập text thì
+            # khái niệm đó không tồn tại. Trả None để UI hiện "N/A" thay vì bịa
+            # ra một con số trông như thật.
+            "confidence": None,
+        },
         "llm": {"status": "done" if command else "failed"},
         "validation": validation_step,
         "face_auth": face_step,
         "execution": execution_step,
     }
 
+    # AuthService dựng câu trả lời bằng `result["response"] or ...`, mà ở nhánh
+    # auth_required thì chuỗi đó đang là "Thiết bị này yêu cầu xác thực khuôn
+    # mặt để kích hoạt." Kết quả: mở cửa THÀNH CÔNG vẫn hiện câu đòi xác thực.
+    # Dựng lại câu trả lời từ trạng thái đã ghi trong database - nguồn sự thật
+    # duy nhất - thay vì tin vào chuỗi được truyền qua nhiều lớp.
+    response_text = result.get('response')
+
+    if (
+        requires_auth
+        and face_step.get("status") == "passed"
+        and execution_state == "success"
+    ):
+        person = face_step.get("person_name") or "người dùng"
+        response_text = f"Đã xác thực {person}. Đã thực hiện lệnh thành công."
+
     return {
         "command_id": result.get('command_id'),
         "transcript": transcript,
+        "source": source,
         "command": command,
-        "response": result.get('response'),
+        "response": response_text,
         "pipeline": pipeline,
         "latency_ms": (command_row or {}).get('latency_ms') or result.get('total_latency_ms'),
         "session_id": result.get('session_id'),
         "awaiting_reply": result.get('awaiting_reply'),
     }
+
+
+def _run_pipeline(
+    transcript: str,
+    session_id: str | None,
+    source: str,
+) -> dict[str, Any]:
+    """
+    Chạy một transcript qua pipeline thật rồi dựng payload cho dashboard.
+
+    Dùng chung cho cả đường văn bản (/api/command) và giọng nói (/api/voice) -
+    sau bước STT thì hai đường hoàn toàn giống nhau, đúng như main.py.
+    """
+    with _pipeline_lock:
+        result = orchestrator.command_service.handle_transcript(
+            transcript,
+            sensor_data=orchestrator.latest_sensor_data,
+            session_id=session_id,
+        )
+
+        if result.get('next_step') == 'auth_required':
+            # Ủy quyền cho orchestrator: nó sở hữu camera (Contract B) và xử lý
+            # cả hai nhánh - AuthService thật, hoặc fail-closed khi face module
+            # chưa sẵn sàng - đồng thời ĐÓNG command_log/face_log. Dựng lại
+            # đoạn này ở đây sẽ tái tạo đúng kiểu trôi lệch mà file này vừa mắc.
+            response = orchestrator._handle_auth_required(result)
+            result['response'] = response or result.get('response')
+
+    command_id = int(result.get('command_id') or -1)
+    command_row = _fetch_command_row(command_id)
+    face_row = _fetch_latest_face_row(command_id)
+
+    return _build_pipeline_payload(
+        transcript, result, command_row, face_row, source=source
+    )
 
 
 @app.route('/api/command', methods=['POST'])
@@ -272,24 +420,57 @@ def api_command():
     if not transcript:
         return jsonify({"error": "transcript is required"}), 400
 
-    with _sensor_lock:
-        sensor_snapshot = dict(_latest_sensor_data)
+    return jsonify(_run_pipeline(transcript, session_id, source="text"))
 
-    result = command_service.handle_transcript(
-        transcript=transcript,
-        sensor_data=sensor_snapshot,
-        session_id=session_id,
-    )
 
-    if result.get('next_step') == 'auth_required':
-        auth_outcome = auth_service.authorize_and_execute(result, frame=None)
-        result['response'] = auth_outcome.get('response') or result.get('response')
+@app.route('/api/voice', methods=['POST'])
+def api_voice():
+    """
+    Contract A: audio -> STT -> pipeline chung.
 
-    command_id = int(result.get('command_id') or -1)
-    command_row = _fetch_command_row(command_id)
-    face_row = _fetch_latest_face_row(command_id)
+    Nhận audio ở ĐỊNH DẠNG BẤT KỲ (trình duyệt thường gửi webm/opus qua
+    MediaRecorder); stt_module tự chuẩn hoá bằng ffmpeg trước khi đưa vào model.
+    """
+    if orchestrator.stt_engine is None:
+        return jsonify({
+            "error": "stt_unavailable",
+            "message": "Chưa cấu hình nhận dạng giọng nói. Bạn hãy nhập bằng văn bản.",
+        }), 503
 
-    return jsonify(_build_pipeline_payload(transcript, result, command_row, face_row))
+    if 'audio' in request.files:
+        audio_bytes = request.files['audio'].read()
+    else:
+        audio_bytes = request.get_data()
+
+    if not audio_bytes:
+        return jsonify({
+            "error": "empty_audio",
+            "message": "Không nhận được dữ liệu âm thanh.",
+        }), 400
+
+    session_id = request.form.get('session_id') or None
+
+    with _pipeline_lock:
+        try:
+            transcript = orchestrator.stt_engine.transcribe(audio_bytes)
+        except Exception as exc:
+            return jsonify({
+                "error": "stt_failed",
+                "message": f"Không nhận dạng được giọng nói: {exc}",
+            }), 500
+
+    # transcribe() nuốt mọi lỗi và trả "" - thiếu ffmpeg, audio hỏng, hoặc
+    # người dùng không nói gì đều rơi vào đây.
+    if not transcript or not transcript.strip():
+        return jsonify({
+            "error": "empty_transcript",
+            "message": (
+                "Mình chưa nghe rõ. Bạn nói lại giúp mình nhé "
+                "(nếu lỗi lặp lại, kiểm tra xem máy chủ đã cài ffmpeg chưa)."
+            ),
+        }), 422
+
+    return jsonify(_run_pipeline(transcript.strip(), session_id, source="voice"))
 
 
 # =============================================================================
@@ -593,3 +774,4 @@ if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))
     print(f"[Web Dashboard] Khởi động server tại http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+
