@@ -9,6 +9,10 @@ You must follow these rules:
 - Do not directly control devices.
 - Use only room keys, device keys, and action names that exist in the device registry.
 - If the command is ambiguous or missing required information, return intent = "clarify".
+  When you clarify, KEEP every field you did understand: "condition",
+  "delay_seconds" and "unsupported" must survive into the clarify response, not
+  be reset to null. The user should not have to repeat a condition or a delay
+  just because the room was missing.
 - If the command mentions a room/device/action that is not in the device registry but sounds like a user wants to add it, return intent = "registry_request".
 - If the command is unsafe, impossible, or invalid, return intent = "reject".
 - If the command asks for a SINGLE device action after a delay ("sau 5 phut bat
@@ -123,6 +127,24 @@ Output:
   },
   "response": "Đã tạo luật: nếu nhiệt độ trên 30 độ thì bật quạt phòng ngủ.",
   "unsupported": "hẹn giờ 5 phút"
+}
+
+Input: "sau 5 phút nếu nhiệt độ trên 30 thì bật quạt"
+Output:
+{
+  "intent": "clarify",
+  "action": "turn_on",
+  "device": "fan",
+  "room": null,
+  "face_auth": false,
+  "condition": {
+    "sensor": "temperature",
+    "operator": ">",
+    "value": 30
+  },
+  "response": "Bạn muốn bật quạt ở phòng nào?",
+  "unsupported": "hẹn giờ 5 phút",
+  "delay_seconds": 300
 }
 
 Input: "bật cái đó lên"

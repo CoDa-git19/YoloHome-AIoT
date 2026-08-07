@@ -898,15 +898,39 @@ def make_clarify_command(
     action: str | None = None,
     device: str | None = None,
     room: str | None = None,
+    condition: dict[str, Any] | None = None,
+    delay_seconds: int | None = None,
+    unsupported: str | None = None,
 ) -> dict[str, Any]:
+    """
+    Command dùng khi phải hỏi lại.
+
+    BA THAM SỐ CUỐI KHÔNG PHẢI SLOT, NHƯNG VẪN PHẢI ĐI QUA.
+
+    Server dựng lại command này để tự soạn câu hỏi (nguyên tắc "server quyết
+    định tập lựa chọn"). Bản trước chỉ mang action/device/room sang, nên mọi
+    thứ khác bị vứt ngay tại đây - kể cả khi model đã hiểu đúng và trả về đủ.
+
+    Quan sát được khi chạy thật:
+
+        User: sau 5 phút nếu nhiệt độ trên 30 thì bật quạt
+        Bot : Bạn muốn bật quạt ở phòng nào?
+        User: phòng ngủ
+        Bot : Đã bật quạt phòng ngủ.        <- mất CẢ điều kiện lẫn độ trễ
+
+    Người dùng yêu cầu một quy tắc có hẹn giờ và nhận về một lệnh chạy ngay.
+    Không có lỗi nào, câu trả lời nghe hoàn toàn bình thường.
+    """
     return {
         "intent": "clarify",
         "action": action,
         "device": device,
         "room": room,
         "face_auth": False,
-        "condition": None,
+        "condition": condition,
         "response": response,
+        "delay_seconds": delay_seconds,
+        "unsupported": unsupported,
     }
 
 
@@ -1260,6 +1284,19 @@ def validate_mock_slots(
 
 SLOT_FIELDS = ("action", "device", "room", "condition")
 
+# Trường KHÔNG phải slot nhưng vẫn phải sống sót qua một lượt hỏi lại.
+#
+# Quan sát được khi chạy thật:
+#     User: sau 5 phút nếu nhiệt độ trên 30 thì bật quạt
+#     Bot : Bạn muốn bật quạt ở phòng nào?
+#     User: phòng ngủ
+#     Bot : Đã bật quạt phòng ngủ.        <- mất CẢ điều kiện lẫn độ trễ
+#
+# Người dùng yêu cầu một quy tắc có hẹn giờ và nhận về một lệnh chạy ngay.
+# Câu trả lời nghe hoàn toàn bình thường, không có lỗi nào - cùng mẫu với
+# những lỗi âm thầm khác trong hệ thống.
+CONTEXT_FIELDS = ("delay_seconds", "unsupported")
+
 
 def is_topic_change(command: dict[str, Any]) -> bool:
     """
@@ -1295,7 +1332,14 @@ def resolve_intent_after_merge(command: dict[str, Any]) -> dict[str, Any]:
         return resolved
 
     if resolved.get("condition") is not None:
+        # Điều kiện CỘNG độ trễ là một quy tắc có giờ khởi động, thứ hệ thống
+        # chưa làm được. Giữ lại điều kiện và để nhánh hỗ-trợ-một-phần hỏi,
+        # thay vì im lặng bỏ mất phần trễ.
         resolved["intent"] = "create_rule"
+        if resolved.get("delay_seconds"):
+            resolved["unsupported"] = resolved.get("unsupported") or "hẹn giờ"
+    elif resolved.get("delay_seconds"):
+        resolved["intent"] = "schedule"
     elif resolved.get("action") == "get_status":
         resolved["intent"] = "query_status"
     else:
@@ -1507,7 +1551,7 @@ def merge_with_pending(
 
     merged = dict(command)
 
-    for field in SLOT_FIELDS:
+    for field in SLOT_FIELDS + CONTEXT_FIELDS:
         if merged.get(field) is None and pending.get(field) is not None:
             merged[field] = pending[field]
 
@@ -2174,6 +2218,9 @@ def parse_and_validate(
                 action=command.get("action"),
                 device=command.get("device"),
                 room=command.get("room"),
+                condition=command.get("condition"),
+                delay_seconds=command.get("delay_seconds"),
+                unsupported=command.get("unsupported"),
             )
 
         latency_ms = int((time.time() - start) * 1000)
