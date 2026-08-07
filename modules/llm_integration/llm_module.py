@@ -337,6 +337,29 @@ def room_display_name(room: str | None) -> str:
     return DISPLAY_NAMES.get("rooms", {}).get(room, "phòng")
 
 
+def schedule_text(command: dict[str, Any], delay_seconds: int) -> str:
+    """
+    Mô tả một lệnh hẹn giờ bằng tiếng Việt tự nhiên.
+
+        "sau 5 phút sẽ bật đèn phòng khách"
+
+    Đọc lại phần người dùng vừa nói thay vì in ra timestamp: người ta nói "sau
+    5 phút" thì xác nhận bằng "sau 5 phút" mới kiểm chứng được, còn
+    "2026-08-01 21:34:00" thì phải tự tính mới biết đúng hay sai.
+    """
+    if delay_seconds >= 3600 and delay_seconds % 3600 == 0:
+        when = f"sau {delay_seconds // 3600} giờ"
+    elif delay_seconds >= 60:
+        when = f"sau {delay_seconds // 60} phút"
+    else:
+        when = f"sau {delay_seconds} giây"
+
+    verb = action_display_name(command.get("action")) or "điều khiển"
+    target = device_in_room_text(command.get("device"), command.get("room"))
+
+    return f"{when} sẽ {verb} {target}"
+
+
 def sensor_display_name(sensor: str | None) -> str:
     """
     Tên tiếng Việt của một cảm biến ("temperature" -> "nhiệt độ").
@@ -1527,6 +1550,9 @@ def determine_next_step(
     if intent == "create_rule":
         return "create_rule"
 
+    if intent == "schedule":
+        return "create_schedule"
+
     if command.get("face_auth") is True:
         return "auth_required"
 
@@ -1727,6 +1753,15 @@ def build_response_schema(
             # "create_rule bỏ im lặng mệnh đề hẹn giờ".
             "unsupported": {
                 "type": "STRING",
+                "nullable": True,
+            },
+            # Độ trễ cho intent="schedule", tính bằng giây.
+            #
+            # Model báo cáo KHOẢNG THỜI GIAN, server tính ra thời điểm tuyệt
+            # đối. Để model tự sinh timestamp thì nó phải biết bây giờ là mấy
+            # giờ - thứ nó không biết, và sẽ bịa ra.
+            "delay_seconds": {
+                "type": "INTEGER",
                 "nullable": True,
             },
         },

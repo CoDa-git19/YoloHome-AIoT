@@ -84,7 +84,16 @@ def normalize_command(
 # command_schema.sensitive_actions, KHÔNG tin giá trị LLM trả về.
 # =============================================================================
 
-POLICY_INTENTS = {"control_device", "query_status", "create_rule"}
+POLICY_INTENTS = {"control_device", "query_status", "create_rule", "schedule"}
+
+# Giới hạn cho lệnh hẹn giờ.
+#
+# Cận dưới: dưới 5 giây thì người dùng không phân biệt được với lệnh chạy ngay,
+# và vòng poll 2 giây có thể bỏ lỡ.
+# Cận trên: 24 giờ. Lịch dài hơn cần giao diện quản lý và cách huỷ tử tế, mà
+# hệ thống chưa có - xem Limitations.
+MIN_SCHEDULE_DELAY_SECONDS = 5
+MAX_SCHEDULE_DELAY_SECONDS = 24 * 60 * 60
 
 
 def requires_face_auth_by_policy(
@@ -280,7 +289,7 @@ def validate_command(
     action = command.get("action")
     
     # router chuyển sang clarify, không phải lỗi hệ thống
-    if intent in {"control_device", "query_status", "create_rule"}:
+    if intent in {"control_device", "query_status", "create_rule", "schedule"}:
         if device is None or room is None or action is None:
             return {
                 "passed": False,
@@ -295,6 +304,55 @@ def validate_command(
             "code": "invalid_query_action",
             "message": "query_status intent must use action=get_status.",
         }
+
+    # 3b. Lệnh hẹn giờ: chạy KHÔNG CÓ NGƯỜI, nên cùng ràng buộc với create_rule.
+    if intent == "schedule":
+        # Cùng lý do đã chặn automation rule: lệnh hẹn giờ thực thi lúc không
+        # ai đứng trước camera, nên không thể xác thực khuôn mặt. Thiếu chốt
+        # này thì "sau 5 phút mở cửa chính" sẽ mở được cửa - đúng lỗ hổng mà
+        # Layer 3 đã đóng cho automation rule, mở lại qua một đường mới.
+        if requires_face_auth_by_policy(
+            device=device,
+            action=action,
+            command_schema=command_schema,
+        ):
+            return {
+                "passed": False,
+                "code": "safety_rule_violation",
+                "message": (
+                    f"Cannot schedule '{action}' on device '{device}': the "
+                    "action requires face authentication, and a scheduled "
+                    "command runs unattended."
+                ),
+            }
+
+        delay = command.get("delay_seconds")
+        if not isinstance(delay, int) or isinstance(delay, bool):
+            return {
+                "passed": False,
+                "code": "invalid_delay",
+                "message": "schedule intent requires an integer delay_seconds.",
+            }
+
+        if delay < MIN_SCHEDULE_DELAY_SECONDS:
+            return {
+                "passed": False,
+                "code": "invalid_delay",
+                "message": (
+                    f"delay_seconds={delay} is too small; minimum is "
+                    f"{MIN_SCHEDULE_DELAY_SECONDS}."
+                ),
+            }
+
+        if delay > MAX_SCHEDULE_DELAY_SECONDS:
+            return {
+                "passed": False,
+                "code": "invalid_delay",
+                "message": (
+                    f"delay_seconds={delay} exceeds the maximum of "
+                    f"{MAX_SCHEDULE_DELAY_SECONDS} (24 hours)."
+                ),
+            }
 
     # 4. Kiểm tra cấu trúc điều kiện nếu là lệnh tạo tự động hóa (create_rule)
     if intent == "create_rule":

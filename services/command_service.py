@@ -4,10 +4,13 @@ import time
 from collections import deque
 from typing import Any
 
+from datetime import datetime, timedelta
+
 from modules.llm_integration.llm_module import (
     action_display_name,
     detect_confirmation,
     device_in_room_text,
+    schedule_text,
     operator_display_name,
     sensor_display_name,
     device_display_name,
@@ -18,7 +21,12 @@ from modules.llm_integration.llm_module import (
     state_display_name,
 )
 from modules.llm_integration.llm_strategy import GeminiLLMStrategy
-from services.logging_service import log_command, log_error, update_command_result
+from services.logging_service import (
+    add_schedule,
+    log_command,
+    log_error,
+    update_command_result,
+)
 from services.rule_service import RuleService
 from config.settings import COMMAND_HISTORY_SIZE
 from services.session_service import SessionService
@@ -281,6 +289,36 @@ class CommandService:
             result_status = "waiting_auth"
             execution_status = "waiting_auth"
             response_text = "Thiết bị này yêu cầu xác thực khuôn mặt để kích hoạt."
+
+        elif next_step == "create_schedule":
+            # Lệnh hẹn giờ: ghi vào bảng schedule, ScheduleObserver chạy khi
+            # tới hạn.
+            #
+            # Server tính thời điểm tuyệt đối từ độ trễ mà model báo cáo. Để
+            # model tự sinh timestamp thì nó phải biết bây giờ là mấy giờ -
+            # thứ nó không biết, nên sẽ bịa ra.
+            delay = int(command.get("delay_seconds") or 0)
+            run_at = (datetime.now() + timedelta(seconds=delay)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            try:
+                schedule_id = add_schedule(run_at, command)
+            except Exception as exc:
+                log_error("gateway", f"add_schedule failed: {exc}")
+                schedule_id = 0
+
+            if schedule_id > 0:
+                result_status = "success"
+                execution_status = "scheduled"
+                response_text = (
+                    f"Đã hẹn giờ: {schedule_text(command, delay)} "
+                    f"(ID: {schedule_id})."
+                )
+            else:
+                result_status = "fail: schedule_error"
+                execution_status = "failed"
+                response_text = "Không thể đặt lịch hẹn giờ."
 
         elif next_step == "create_rule" and command.get("unsupported"):
             # Yêu cầu chỉ được hỗ trợ MỘT PHẦN.

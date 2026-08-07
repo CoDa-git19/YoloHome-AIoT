@@ -28,9 +28,6 @@ import argparse
 import threading
 import time
 from typing import Any, Callable
-import logging
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 from config import settings
 
@@ -42,7 +39,7 @@ from services.logging_service import (
     LoggingService, log_error, log_face, update_command_result,
 )
 from system_core.observers import (
-    RuleObserver, SensorLoggingObserver, SensorPersistObserver,
+    RuleObserver, ScheduleObserver, SensorLoggingObserver, SensorPersistObserver,
 )
 from services.rule_service import RuleService
 
@@ -132,6 +129,11 @@ class MainOrchestrator:
         self.hardware_module.attach(
             RuleObserver(self.rule_service, self.command_service)
         )
+
+        # Lệnh hẹn giờ dùng CHUNG nhịp đập với automation rule. Vòng poll đã
+        # chạy mỗi 2 giây rồi; dựng thêm một luồng hẹn giờ riêng là thêm một
+        # nơi có thể chết âm thầm và thêm một thứ phải nhớ dọn khi thoát.
+        self.hardware_module.attach(ScheduleObserver(self.command_service))
 
         # Giữ lịch sử cảm biến trong RAM cho dashboard và debug.
         self.sensor_history = SensorLoggingObserver(max_history=100)
@@ -716,6 +718,14 @@ def main(argv: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(argv)
 
     orchestrator = MainOrchestrator(
+        # Chế độ text không cần STT -> mặc định dùng mock để khỏi tải model.
+        # KHÔNG ép mock theo --voice.
+        #
+        # Bản trước: use_mock_stt=True if (args.mock_stt or not args.voice) else False
+        # Chạy không kèm --voice là ép mock, nên USE_MOCK_STT=false trong .env
+        # bị vô hiệu ÂM THẦM - không lỗi, không cảnh báo, log vẫn báo MOCK mode
+        # và hai câu nói khác nhau cho ra cùng một transcript.
+        #
         # --mock-stt vẫn ép mock (để test nhanh), còn lại để settings quyết định.
         # Model nạp lazy ở lần transcribe() đầu nên chế độ text không tốn gì.
         use_mock_stt=True if args.mock_stt else None,
