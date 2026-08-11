@@ -223,9 +223,14 @@ class ScheduleObserver(Observer):
                 )
                 continue
 
-            self.command_executor.execute_authorized_command(command)
-            self.executed_count += 1
+            try:
+                ok = self.command_executor.execute_authorized_command(command)
+            except Exception as exc:
+                logger.error("Không chạy được lệnh hẹn giờ id=%s: %s", row.get("id"), exc)
+                continue
 
+            if ok:
+                self.executed_count += 1
     def _due_schedules(self) -> list[dict[str, Any]]:
         """
         get_schedules() vừa ĐỌC vừa ĐÁNH DẤU đã dùng trong một giao dịch, nên
