@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col gap-4 pb-4">
+    <!-- 3.1 KPI Summary Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-comment-dots text-blue-500"></i> Total Commands</div>
+            <p id="kpi-total" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
+            <p class="text-[10px] text-slate-400">All time</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-circle-check text-emerald-500"></i> Success Rate</div>
+            <p id="kpi-success-rate" class="text-xl font-bold text-emerald-500">--</p>
+            <p id="kpi-success-count" class="text-[10px] text-slate-400">-- success</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-circle-xmark text-rose-500"></i> Rejected</div>
+            <p id="kpi-rejected" class="text-xl font-bold text-rose-500">--</p>
+            <p id="kpi-rejected-rate" class="text-[10px] text-slate-400">--%</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-lock text-amber-500"></i> Requires Auth</div>
+            <p id="kpi-auth" class="text-xl font-bold text-amber-500">--</p>
+            <p id="kpi-auth-rate" class="text-[10px] text-slate-400">--%</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-stopwatch text-blue-500"></i> Avg Latency</div>
+            <p id="kpi-latency" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
+            <p class="text-[10px] text-slate-400">ms / command</p>
+        </div>
+    </div>
+
+    <div class="flex flex-col lg:flex-row gap-4 items-start">
+        <!-- 3.2 Data table + filters -->
+        <div class="w-full lg:w-[68%] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <input type="date" id="f-date-from" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <span class="text-slate-400 text-xs">→</span>
+                <input type="date" id="f-date-to" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <select id="f-device" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                    <option value="all">All Devices</option>
+                </select>
+                <select id="f-status" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                    <option value="all">All Results</option>
+                    <option value="success">success</option>
+                    <option value="failed">failed</option>
+                    <option value="rejected">rejected</option>
+                    <option value="waiting_auth">waiting_auth</option>
+                    <option value="clarify">clarify</option>
+                    <option value="registry_request">registry_request</option>
+                </select>
+                <input type="text" id="f-search" placeholder="Search transcript/intent..."
+                       class="flex-1 min-w-[140px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <button id="f-refresh" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sync-alt mr-1"></i> Refresh
+                </button>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar border border-slate-100 dark:border-slate-800 rounded-lg">
+                <table class="w-full text-left border-collapse">
+                    <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 dark:bg-slate-800">
+                        <tr>
+                            <th class="p-2.5 font-medium">Time</th>
+                            <th class="p-2.5 font-medium">Transcript</th>
+                            <th class="p-2.5 font-medium">Intent</th>
+                            <th class="p-2.5 font-medium">Device</th>
+                            <th class="p-2.5 font-medium">Room</th>
+                            <th class="p-2.5 font-medium">Validation</th>
+                            <th class="p-2.5 font-medium">Auth</th>
+                            <th class="p-2.5 font-medium">Result</th>
+                            <th class="p-2.5 font-medium">Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="text-xs text-slate-600 dark:text-slate-300">
+                        <tr><td colspan="9" class="p-6 text-center text-slate-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex justify-between items-center pt-3 text-xs text-slate-500">
+                <span id="pagination-info">Showing 0 entries</span>
+                <div id="pagination-controls" class="flex items-center gap-1"></div>
+            </div>
+        </div>
+
+        <!-- 3.3 Selected Command Details -->
+        <div class="w-full lg:w-[32%] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold text-slate-800 dark:text-white text-sm mb-3">Selected Command Details</h3>
+            <div id="detail-empty" class="text-xs text-slate-400 text-center py-10">
+                <i class="fas fa-hand-pointer text-2xl mb-2 block"></i>
+                Click a row to see details.
+            </div>
+            <div id="detail-content" class="hidden flex flex-col gap-3 text-xs">
+                <div class="grid grid-cols-1 gap-1.5">
+                    <div><span class="text-slate-400">Original Transcript:</span> <span id="d-transcript" class="text-slate-700 dark:text-slate-200 font-medium">--</span></div>
+                    <div><span class="text-slate-400">Intent:</span> <span id="d-intent" class="text-slate-700 dark:text-slate-200 font-medium">--</span></div>
+                    <div><span class="text-slate-400">Device / Room:</span> <span id="d-device-room" class="text-slate-700 dark:text-slate-200 font-medium">--</span></div>
+                </div>
+
+                <div>
+                    <p class="text-slate-500 dark:text-slate-400 font-semibold mb-1">LLM JSON Output</p>
+                    <pre id="d-json" class="code-block rounded-lg p-2.5 text-emerald-400 text-[10px] overflow-x-auto"></pre>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Validation Result</span>
+                        <span id="d-validation" class="font-semibold">--</span>
+                    </div>
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Authentication</span>
+                        <span id="d-auth" class="font-semibold">--</span>
+                    </div>
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Execution Result</span>
+                        <span id="d-execution" class="font-semibold">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500">Latency</span>
+                        <span id="d-latency" class="font-semibold text-slate-700 dark:text-slate-200">--</span>
+                    </div>
+                </div>
+
+                <div id="d-error-wrap" class="hidden bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-lg p-2.5 text-rose-600 dark:text-rose-400">
+                    <span id="d-error"></span>
+                </div>
+
+                <div>
+                    <p class="text-slate-500 dark:text-slate-400 font-semibold mb-2">Command Insights (Selected Period)</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-emerald-500 font-bold" id="insight-success">--</p>
+                            <p class="text-[10px] text-slate-400">Success</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-rose-500 font-bold" id="insight-rejected">--</p>
+                            <p class="text-[10px] text-slate-400">Rejected</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-amber-500 font-bold" id="insight-auth">--</p>
+                            <p class="text-[10px] text-slate-400">Auth Required</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-blue-500 font-bold" id="insight-latency">--</p>
+                            <p class="text-[10px] text-slate-400">Avg Latency</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let state = { page: 1, pageSize: 10, rows: [] };
+
+    function currentFilters() {
+        return {
+            date_from: document.getElementById('f-date-from').value,
+            date_to: document.getElementById('f-date-to').value,
+            device: document.getElementById('f-device').value,
+            status: document.getElementById('f-status').value,
+            search: document.getElementById('f-search').value.trim(),
+        };
+    }
+
+    function toQuery(params) {
+        const q = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => { if (v) q.set(k, v); });
+        return q.toString();
+    }
+
+    async function loadSummary() {
+        const query = toQuery({ date_from: currentFilters().date_from, date_to: currentFilters().date_to });
+        const res = await fetch(`/api/command-log/summary?${query}`);
+        const data = await res.json();
+
+        document.getElementById('kpi-total').textContent = data.total.toLocaleString();
+        document.getElementById('kpi-success-rate').textContent = Dash.fmtPct(data.success_rate);
+        document.getElementById('kpi-success-count').textContent = `${data.success} success`;
+        document.getElementById('kpi-rejected').textContent = data.rejected;
+        document.getElementById('kpi-rejected-rate').textContent = Dash.fmtPct(data.rejected_rate);
+        document.getElementById('kpi-auth').textContent = data.requires_auth;
+        document.getElementById('kpi-auth-rate').textContent = Dash.fmtPct(data.requires_auth_rate);
+        document.getElementById('kpi-latency').textContent = data.avg_latency_ms !== null ? `${data.avg_latency_ms} ms` : '--';
+
+        document.getElementById('insight-success').textContent = data.success;
+        document.getElementById('insight-rejected').textContent = data.rejected;
+        document.getElementById('insight-auth').textContent = data.requires_auth;
+        document.getElementById('insight-latency').textContent = data.avg_latency_ms !== null ? `${data.avg_latency_ms}ms` : '--';
+
+        const deviceSelect = document.getElementById('f-device');
+        const currentDevice = deviceSelect.value;
+        deviceSelect.innerHTML = '<option value="all">All Devices</option>' +
+            data.device_options.map(d => `<option value="${d}">${d}</option>`).join('');
+        deviceSelect.value = currentDevice;
+    }
+
+    async function loadTable() {
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">Loading...</td></tr>`;
+
+        const query = toQuery({ ...currentFilters(), page: state.page, page_size: state.pageSize });
+        const res = await fetch(`/api/command-log?${query}`);
+        const data = await res.json();
+        state.rows = data.rows;
+        state.total = data.total;
+        state.totalPages = data.total_pages;
+
+        if (!data.rows.length) {
+            tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">No commands found.</td></tr>`;
+        } else {
+            tbody.innerHTML = data.rows.map(row => `
+                <tr class="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition cursor-pointer" data-id="${row.id}">
+                    <td class="p-2.5 whitespace-nowrap text-slate-400">${Dash.fmtTime(row.timestamp)}</td>
+                    <td class="p-2.5 max-w-[160px] truncate text-slate-700 dark:text-slate-200 font-medium" title="${Dash.escapeHtml(row.transcript)}">${Dash.escapeHtml(row.transcript || '-')}</td>
+                    <td class="p-2.5">${Dash.escapeHtml(row.intent || '-')}</td>
+                    <td class="p-2.5">${Dash.escapeHtml(row.device || '-')}</td>
+                    <td class="p-2.5">${Dash.escapeHtml(row.room || '-')}</td>
+                    <td class="p-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-medium ${Dash.badgeFor('validation', row.validation_status)}">${(row.validation_status || '-').toUpperCase()}</span></td>
+                    <td class="p-2.5">${row.face_auth ? 'Yes' : 'No'}</td>
+                    <td class="p-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-medium ${Dash.badgeFor('result', row.execution_status)}">${Dash.escapeHtml(row.result || '-')}</span></td>
+                    <td class="p-2.5">${row.latency_ms ?? '-'} ms</td>
+                </tr>
+            `).join('');
+        }
+
+        renderPagination();
+    }
+
+    function renderPagination() {
+        const from = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+        const to = Math.min(state.page * state.pageSize, state.total);
+        document.getElementById('pagination-info').textContent = `Showing ${from} to ${to} of ${state.total} entries`;
+
+        const controls = document.getElementById('pagination-controls');
+        const maxBtn = 5;
+        let start = Math.max(1, state.page - Math.floor(maxBtn / 2));
+        let end = Math.min(state.totalPages, start + maxBtn - 1);
+        start = Math.max(1, end - maxBtn + 1);
+
+        let html = `<button class="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : ''}" data-page="${state.page - 1}" ${state.page <= 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
+        for (let p = start; p <= end; p++) {
+            html += `<button class="px-2.5 py-1 rounded ${p === state.page ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}" data-page="${p}">${p}</button>`;
+        }
+        html += `<button class="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${state.page >= state.totalPages ? 'opacity-40 cursor-not-allowed' : ''}" data-page="${state.page + 1}" ${state.page >= state.totalPages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
+        controls.innerHTML = html;
+
+        controls.querySelectorAll('button[data-page]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const p = parseInt(btn.dataset.page, 10);
+                if (p >= 1 && p <= state.totalPages) { state.page = p; loadTable(); }
+            });
+        });
+    }
+
+    function showDetail(row) {
+        document.getElementById('detail-empty').classList.add('hidden');
+        document.getElementById('detail-content').classList.remove('hidden');
+
+        document.getElementById('d-transcript').textContent = row.transcript || '-';
+        document.getElementById('d-intent').textContent = row.intent || '-';
+        document.getElementById('d-device-room').textContent = `${row.device || '-'} / ${row.room || '-'}`;
+
+        let pretty = row.json_cmd;
+        try { pretty = JSON.stringify(JSON.parse(row.json_cmd), null, 2); } catch (e) {}
+        document.getElementById('d-json').textContent = pretty;
+
+        const vEl = document.getElementById('d-validation');
+        vEl.textContent = (row.validation_status || '-').toUpperCase();
+        vEl.className = `font-semibold ${row.validation_status === 'passed' ? 'text-emerald-500' : 'text-rose-500'}`;
+
+        const aEl = document.getElementById('d-auth');
+        aEl.textContent = row.face_auth ? 'REQUIRED' : 'NOT REQUIRED';
+        aEl.className = `font-semibold ${row.face_auth ? 'text-amber-500' : 'text-slate-400'}`;
+
+        const eEl = document.getElementById('d-execution');
+        eEl.textContent = (row.result || '-').toUpperCase();
+        eEl.className = `font-semibold ${row.execution_status === 'success' ? 'text-emerald-500' : row.execution_status === 'failed' ? 'text-rose-500' : 'text-amber-500'}`;
+
+        document.getElementById('d-latency').textContent = row.latency_ms ? `${row.latency_ms} ms` : '--';
+
+        const errWrap = document.getElementById('d-error-wrap');
+        if (row.error_message) {
+            errWrap.classList.remove('hidden');
+            document.getElementById('d-error').textContent = row.error_message;
+        } else {
+            errWrap.classList.add('hidden');
+        }
+    }
+
+    document.getElementById('table-body').addEventListener('click', (e) => {
+        const tr = e.target.closest('tr[data-id]');
+        if (!tr) return;
+        const row = state.rows.find(r => String(r.id) === tr.dataset.id);
+        if (row) showDetail(row);
+    });
+
+    function reload() {
+        state.page = 1;
+        loadSummary();
+        loadTable();
+    }
+
+    document.getElementById('f-refresh').addEventListener('click', reload);
+    ['f-date-from', 'f-date-to', 'f-device', 'f-status'].forEach(id => {
+        document.getElementById(id).addEventListener('change', reload);
+    });
+    let searchTimer;
+    document.getElementById('f-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(reload, 400);
+    });
+
+    reload();
+</script>
+{% endblock %}
+

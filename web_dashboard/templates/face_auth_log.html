@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col gap-4 pb-4">
+    <!-- 4.1 KPI Summary Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-user-shield text-blue-500"></i> Total Auth Events</div>
+            <p id="kpi-total" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
+            <p class="text-[10px] text-slate-400">All time</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-circle-check text-emerald-500"></i> Authorized Rate</div>
+            <p id="kpi-authorized-rate" class="text-xl font-bold text-emerald-500">--</p>
+            <p id="kpi-authorized-count" class="text-[10px] text-slate-400">-- authorized</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-user-question text-amber-500"></i> Unknown Attempts</div>
+            <p id="kpi-unknown" class="text-xl font-bold text-amber-500">--</p>
+            <p id="kpi-unknown-rate" class="text-[10px] text-slate-400">--%</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-shield-halved text-rose-500"></i> Rejected Access</div>
+            <p id="kpi-rejected" class="text-xl font-bold text-rose-500">--</p>
+            <p id="kpi-rejected-rate" class="text-[10px] text-slate-400">--%</p>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-chart-line text-blue-500"></i> Avg Confidence</div>
+            <p id="kpi-confidence" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
+            <p class="text-[10px] text-slate-400">recognition score</p>
+        </div>
+    </div>
+
+    <div class="flex flex-col lg:flex-row gap-4 items-start">
+        <!-- 4.2 Data table + filters -->
+        <div class="w-full lg:w-[68%] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <input type="date" id="f-date-from" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <span class="text-slate-400 text-xs">→</span>
+                <input type="date" id="f-date-to" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <select id="f-status" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                    <option value="all">All Statuses</option>
+                    <option value="authorized">Authorized</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="unknown">Unknown</option>
+                </select>
+                <select id="f-triggered" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                    <option value="all">All Triggered By</option>
+                </select>
+                <input type="text" id="f-search" placeholder="Search user/device..."
+                       class="flex-1 min-w-[140px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <button id="f-refresh" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sync-alt mr-1"></i> Refresh
+                </button>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar border border-slate-100 dark:border-slate-800 rounded-lg">
+                <table class="w-full text-left border-collapse">
+                    <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 dark:bg-slate-800">
+                        <tr>
+                            <th class="p-2.5 font-medium">Time</th>
+                            <th class="p-2.5 font-medium">User</th>
+                            <th class="p-2.5 font-medium">Confidence</th>
+                            <th class="p-2.5 font-medium">Status</th>
+                            <th class="p-2.5 font-medium">Triggered by</th>
+                            <th class="p-2.5 font-medium">Device / Room</th>
+                            <th class="p-2.5 font-medium">Action Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="text-xs text-slate-600 dark:text-slate-300">
+                        <tr><td colspan="7" class="p-6 text-center text-slate-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex justify-between items-center pt-3 text-xs text-slate-500">
+                <span id="pagination-info">Showing 0 entries</span>
+                <div id="pagination-controls" class="flex items-center gap-1"></div>
+            </div>
+        </div>
+
+        <!-- 4.3 Selected Authentication Details -->
+        <div class="w-full lg:w-[32%] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold text-slate-800 dark:text-white text-sm mb-3">Selected Authentication Details</h3>
+            <div id="detail-empty" class="text-xs text-slate-400 text-center py-10">
+                <i class="fas fa-hand-pointer text-2xl mb-2 block"></i>
+                Click a row to see details.
+            </div>
+            <div id="detail-content" class="hidden flex flex-col gap-3 text-xs">
+                <div class="flex items-center gap-3">
+                    <div id="d-avatar" class="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0">?</div>
+                    <div>
+                        <p id="d-name" class="font-semibold text-slate-800 dark:text-white text-sm">--</p>
+                        <span id="d-status-badge" class="text-[10px] font-semibold px-2 py-0.5 rounded">--</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Confidence</span>
+                        <span id="d-confidence" class="font-semibold text-slate-700 dark:text-slate-200">--</span>
+                    </div>
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Triggered By</span>
+                        <span id="d-triggered" class="font-semibold text-slate-700 dark:text-slate-200">--</span>
+                    </div>
+                    <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span class="text-slate-500">Device / Room</span>
+                        <span id="d-device-room" class="font-semibold text-slate-700 dark:text-slate-200">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500">Action Result</span>
+                        <span id="d-action-result" class="font-semibold text-slate-700 dark:text-slate-200">--</span>
+                    </div>
+                </div>
+
+                <div id="d-note-wrap" class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2.5 text-slate-500 dark:text-slate-400">
+                    <span id="d-note"></span>
+                </div>
+
+                <div>
+                    <p class="text-slate-500 dark:text-slate-400 font-semibold mb-1">Auth Event (JSON)</p>
+                    <pre id="d-json" class="code-block rounded-lg p-2.5 text-emerald-400 text-[10px] overflow-x-auto"></pre>
+                </div>
+
+                <div>
+                    <p class="text-slate-500 dark:text-slate-400 font-semibold mb-2">Security Insights (Selected Period)</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-emerald-500 font-bold" id="insight-authorized">--</p>
+                            <p class="text-[10px] text-slate-400">Authorized</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-amber-500 font-bold" id="insight-unknown">--</p>
+                            <p class="text-[10px] text-slate-400">Unknown</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-rose-500 font-bold" id="insight-rejected">--</p>
+                            <p class="text-[10px] text-slate-400">Rejected</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 text-center">
+                            <p class="text-blue-500 font-bold" id="insight-confidence">--</p>
+                            <p class="text-[10px] text-slate-400">Avg Confidence</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let state = { page: 1, pageSize: 10, rows: [] };
+
+    const AVATAR_COLORS = ['bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-sky-500'];
+    function avatarColor(name) {
+        if (!name) return 'bg-slate-500';
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+    }
+    function initials(name) {
+        if (!name) return '?';
+        return name.split(/[\s_]+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
+    }
+    function statusGroup(status) {
+        if (status === 'authorized') return 'authorized';
+        if (status === 'denied') return 'rejected';
+        return 'unknown';
+    }
+    function statusLabel(status) {
+        return statusGroup(status).toUpperCase();
+    }
+
+    function currentFilters() {
+        return {
+            date_from: document.getElementById('f-date-from').value,
+            date_to: document.getElementById('f-date-to').value,
+            status: document.getElementById('f-status').value,
+            triggered_by: document.getElementById('f-triggered').value,
+            search: document.getElementById('f-search').value.trim(),
+        };
+    }
+
+    function toQuery(params) {
+        const q = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => { if (v) q.set(k, v); });
+        return q.toString();
+    }
+
+    async function loadSummary() {
+        const query = toQuery({ date_from: currentFilters().date_from, date_to: currentFilters().date_to });
+        const res = await fetch(`/api/face-log/summary?${query}`);
+        const data = await res.json();
+
+        document.getElementById('kpi-total').textContent = data.total.toLocaleString();
+        document.getElementById('kpi-authorized-rate').textContent = Dash.fmtPct(data.authorized_rate);
+        document.getElementById('kpi-authorized-count').textContent = `${data.authorized} authorized`;
+        document.getElementById('kpi-unknown').textContent = data.unknown;
+        document.getElementById('kpi-unknown-rate').textContent = Dash.fmtPct(data.unknown_rate);
+        document.getElementById('kpi-rejected').textContent = data.rejected;
+        document.getElementById('kpi-rejected-rate').textContent = Dash.fmtPct(data.rejected_rate);
+        document.getElementById('kpi-confidence').textContent = data.avg_confidence !== null ? `${data.avg_confidence}%` : '--';
+
+        document.getElementById('insight-authorized').textContent = data.authorized;
+        document.getElementById('insight-unknown').textContent = data.unknown;
+        document.getElementById('insight-rejected').textContent = data.rejected;
+        document.getElementById('insight-confidence').textContent = data.avg_confidence !== null ? `${data.avg_confidence}%` : '--';
+
+        const triggeredSelect = document.getElementById('f-triggered');
+        const currentVal = triggeredSelect.value;
+        triggeredSelect.innerHTML = '<option value="all">All Triggered By</option>' +
+            data.triggered_by_options.map(t => `<option value="${Dash.escapeHtml(t)}">${Dash.escapeHtml(t)}</option>`).join('');
+        triggeredSelect.value = currentVal;
+    }
+
+    async function loadTable() {
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400">Loading...</td></tr>`;
+
+        const query = toQuery({ ...currentFilters(), page: state.page, page_size: state.pageSize });
+        const res = await fetch(`/api/face-log?${query}`);
+        const data = await res.json();
+        state.rows = data.rows;
+        state.total = data.total;
+        state.totalPages = data.total_pages;
+
+        if (!data.rows.length) {
+            tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400">No auth events found.</td></tr>`;
+        } else {
+            tbody.innerHTML = data.rows.map(row => `
+                <tr class="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition cursor-pointer" data-id="${row.id}">
+                    <td class="p-2.5 whitespace-nowrap text-slate-400">${Dash.fmtTime(row.timestamp)}</td>
+                    <td class="p-2.5">
+                        <div class="flex items-center gap-2">
+                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold ${avatarColor(row.person_name)}">${initials(row.person_name)}</div>
+                            <span class="font-medium text-slate-700 dark:text-slate-200">${Dash.escapeHtml(row.person_name || 'Unknown')}</span>
+                        </div>
+                    </td>
+                    <td class="p-2.5">${Math.round((row.confidence || 0) * 100)}%</td>
+                    <td class="p-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-medium ${Dash.badgeFor('face', statusGroup(row.status))}">${statusLabel(row.status)}</span></td>
+                    <td class="p-2.5 max-w-[130px] truncate">${Dash.escapeHtml(row.command_transcript || row.triggered_by || '-')}</td>
+                    <td class="p-2.5">${Dash.escapeHtml(row.device || '-')} / ${Dash.escapeHtml(row.room || '-')}</td>
+                    <td class="p-2.5">${Dash.escapeHtml(row.action_result || '-')}</td>
+                </tr>
+            `).join('');
+        }
+
+        renderPagination();
+    }
+
+    function renderPagination() {
+        const from = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+        const to = Math.min(state.page * state.pageSize, state.total);
+        document.getElementById('pagination-info').textContent = `Showing ${from} to ${to} of ${state.total} entries`;
+
+        const controls = document.getElementById('pagination-controls');
+        const maxBtn = 5;
+        let start = Math.max(1, state.page - Math.floor(maxBtn / 2));
+        let end = Math.min(state.totalPages, start + maxBtn - 1);
+        start = Math.max(1, end - maxBtn + 1);
+
+        let html = `<button class="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : ''}" data-page="${state.page - 1}" ${state.page <= 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
+        for (let p = start; p <= end; p++) {
+            html += `<button class="px-2.5 py-1 rounded ${p === state.page ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}" data-page="${p}">${p}</button>`;
+        }
+        html += `<button class="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${state.page >= state.totalPages ? 'opacity-40 cursor-not-allowed' : ''}" data-page="${state.page + 1}" ${state.page >= state.totalPages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
+        controls.innerHTML = html;
+
+        controls.querySelectorAll('button[data-page]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const p = parseInt(btn.dataset.page, 10);
+                if (p >= 1 && p <= state.totalPages) { state.page = p; loadTable(); }
+            });
+        });
+    }
+
+    const NOTES = {
+        authorized: 'Xác thực thành công, quyền truy cập đã được cấp.',
+        denied: 'Nhận diện được khuôn mặt nhưng độ tin cậy dưới ngưỡng cho phép — truy cập bị từ chối.',
+        no_face: 'Không phát hiện khuôn mặt trong khung hình.',
+        timeout: 'Hết thời gian chờ xác thực khuôn mặt.',
+    };
+
+    function showDetail(row) {
+        document.getElementById('detail-empty').classList.add('hidden');
+        document.getElementById('detail-content').classList.remove('hidden');
+
+        const avatar = document.getElementById('d-avatar');
+        avatar.className = `w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0 ${avatarColor(row.person_name)}`;
+        avatar.textContent = initials(row.person_name);
+
+        document.getElementById('d-name').textContent = row.person_name || 'Unknown';
+
+        const badge = document.getElementById('d-status-badge');
+        badge.textContent = statusLabel(row.status);
+        badge.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${Dash.badgeFor('face', statusGroup(row.status))}`;
+
+        document.getElementById('d-confidence').textContent = `${Math.round((row.confidence || 0) * 100)}%`;
+        document.getElementById('d-triggered').textContent = row.command_transcript || row.triggered_by || '-';
+        document.getElementById('d-device-room').textContent = `${row.device || '-'} / ${row.room || '-'}`;
+        document.getElementById('d-action-result').textContent = row.action_result || '-';
+        document.getElementById('d-note').textContent = NOTES[row.status] || '-';
+
+        document.getElementById('d-json').textContent = JSON.stringify({
+            event: 'face_auth',
+            timestamp: row.timestamp,
+            command_id: row.command_id,
+            person_name: row.person_name,
+            confidence: row.confidence,
+            status: row.status,
+            triggered_by: row.command_transcript || row.triggered_by,
+            device: row.device,
+            room: row.room,
+            action_result: row.action_result,
+        }, null, 2);
+    }
+
+    document.getElementById('table-body').addEventListener('click', (e) => {
+        const tr = e.target.closest('tr[data-id]');
+        if (!tr) return;
+        const row = state.rows.find(r => String(r.id) === tr.dataset.id);
+        if (row) showDetail(row);
+    });
+
+    function reload() {
+        state.page = 1;
+        loadSummary();
+        loadTable();
+    }
+
+    document.getElementById('f-refresh').addEventListener('click', reload);
+    ['f-date-from', 'f-date-to', 'f-status', 'f-triggered'].forEach(id => {
+        document.getElementById(id).addEventListener('change', reload);
+    });
+    let searchTimer;
+    document.getElementById('f-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(reload, 400);
+    });
+
+    reload();
+</script>
+{% endblock %}
+
