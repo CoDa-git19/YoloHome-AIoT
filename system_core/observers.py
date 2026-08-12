@@ -165,6 +165,112 @@ class RuleObserver(Observer):
         )
 
 
+class ScheduleObserver(Observer):
+    """
+    Chạy các lệnh hẹn giờ đã tới hạn.
+
+    VÌ SAO GẮN VÀO VÒNG CẢM BIẾN
+    ----------------------------
+    Lệnh hẹn giờ cần một cái đồng hồ. Hệ thống đã có sẵn một nhịp đập đều đặn:
+    poll_sensors() chạy mỗi 2 giây. Dựng thêm một luồng hẹn giờ riêng là thêm
+    một nơi có thể chết âm thầm, thêm một chỗ phải dọn khi thoát, và thêm một
+    thứ để quên attach.
+
+    Đổi lại: độ chính xác chỉ tới mức chu kỳ poll. Lịch đặt 60 giây có thể chạy
+    ở giây thứ 60 hoặc 62. Với lệnh nhà thông minh thì không đáng kể.
+
+    Observer này KHÔNG dùng tới sensor_data. Nó nhận tham số đó vì Observer là
+    một interface chung, và nó cần nhịp đập chứ không cần dữ liệu.
+
+    CHỐT CHẶN XÁC THỰC
+    ------------------
+    Giống RuleObserver: lệnh hẹn giờ chạy khi KHÔNG có ai đứng trước camera,
+    nên hành động cần Face Auth không bao giờ được chạy từ đây. Validator đã
+    chặn lúc tạo; đây là lớp thứ hai, cho trường hợp có ai đó ghi thẳng vào
+    bảng schedule.
+    """
+
+    def __init__(
+        self,
+        command_executor: CommandExecutor,
+        schedule_reader: Any = None,
+    ) -> None:
+        self.command_executor = command_executor
+
+        # Tiêm được để test không cần database.
+        if schedule_reader is None:
+            from services.logging_service import get_schedules
+
+            schedule_reader = get_schedules
+
+        self.schedule_reader = schedule_reader
+        self.executed_count = 0
+        self.blocked_count = 0
+
+    def update(self, sensor_data: SensorData) -> None:
+        for row in self._due_schedules():
+            command = self._command_from(row)
+            if command is None:
+                continue
+
+            if RuleObserver._requires_face_auth(command):
+                self.blocked_count += 1
+                logger.error(
+                    "Chặn lệnh hẹn giờ cần Face Auth: %s.%s. "
+                    "Lệnh hẹn giờ chạy tự động nên không thể xác thực khuôn mặt.",
+                    command.get("device"),
+                    command.get("action"),
+                )
+                continue
+
+            try:
+                ok = self.command_executor.execute_authorized_command(command)
+            except Exception as exc:
+                logger.error("Không chạy được lệnh hẹn giờ id=%s: %s", row.get("id"), exc)
+                continue
+
+            if ok:
+                self.executed_count += 1
+    def _due_schedules(self) -> list[dict[str, Any]]:
+        """
+        get_schedules() vừa ĐỌC vừa ĐÁNH DẤU đã dùng trong một giao dịch, nên
+        một lịch không thể chạy hai lần kể cả khi hai vòng poll chồng nhau.
+        """
+        try:
+            return list(self.schedule_reader() or [])
+        except Exception as exc:
+            logger.error("Không đọc được lịch hẹn giờ: %s", exc)
+            return []
+
+    @staticmethod
+    def _command_from(row: dict[str, Any]) -> dict[str, Any] | None:
+        import json
+
+        raw = row.get("json_cmd")
+
+        try:
+            command = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError) as exc:
+            logger.error("Lịch id=%s có json_cmd hỏng: %s", row.get("id"), exc)
+            return None
+
+        if not command.get("device") or not command.get("action"):
+            logger.error("Lịch id=%s thiếu device hoặc action", row.get("id"))
+            return None
+
+        # Chạy như một lệnh điều khiển bình thường: bảng schedule lưu ý định,
+        # còn thứ đưa xuống phần cứng phải là một lệnh control_device hợp lệ.
+        return {
+            "intent": "control_device",
+            "action": command["action"],
+            "device": command["device"],
+            "room": command.get("room"),
+            "face_auth": False,
+            "condition": None,
+            "response": command.get("response", ""),
+        }
+
+
 class SensorLoggingObserver(Observer):
     """Giữ lịch sử dữ liệu cảm biến cho dashboard và debug."""
 
@@ -230,6 +336,7 @@ __all__ = [
     "Observer",
     "Subject",
     "RuleObserver",
+    "ScheduleObserver",
     "SensorLoggingObserver",
     "SensorPersistObserver",
     "SENSOR_PERSIST_INTERVAL",

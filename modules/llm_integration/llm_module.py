@@ -337,6 +337,52 @@ def room_display_name(room: str | None) -> str:
     return DISPLAY_NAMES.get("rooms", {}).get(room, "phòng")
 
 
+def schedule_text(command: dict[str, Any], delay_seconds: int) -> str:
+    """
+    Mô tả một lệnh hẹn giờ bằng tiếng Việt tự nhiên.
+
+        "sau 5 phút sẽ bật đèn phòng khách"
+
+    Đọc lại phần người dùng vừa nói thay vì in ra timestamp: người ta nói "sau
+    5 phút" thì xác nhận bằng "sau 5 phút" mới kiểm chứng được, còn
+    "2026-08-01 21:34:00" thì phải tự tính mới biết đúng hay sai.
+    """
+    if delay_seconds >= 3600 and delay_seconds % 3600 == 0:
+        when = f"sau {delay_seconds // 3600} giờ"
+    elif delay_seconds >= 60:
+        when = f"sau {delay_seconds // 60} phút"
+    else:
+        when = f"sau {delay_seconds} giây"
+
+    verb = action_display_name(command.get("action")) or "điều khiển"
+    target = device_in_room_text(command.get("device"), command.get("room"))
+
+    return f"{when} sẽ {verb} {target}"
+
+
+def sensor_display_name(sensor: str | None) -> str:
+    """
+    Tên tiếng Việt của một cảm biến ("temperature" -> "nhiệt độ").
+
+    Lấy alias ĐẦU TIÊN trong config/language_aliases.json -> conditions.sensors,
+    theo quy ước alias đầy đủ nhất đứng trước. Không có thì trả lại chính khoá,
+    để câu vẫn đọc được thay vì rỗng.
+    """
+    aliases = CONDITION_ALIASES.get("sensors", {}).get(sensor or "", [])
+    return aliases[0] if aliases else (sensor or "")
+
+
+def operator_display_name(operator: str | None) -> str:
+    """
+    Cách đọc một toán tử so sánh (">" -> "trên").
+
+    Cùng nguồn với sensor_display_name. Nhờ vậy câu hỏi xác nhận nói đúng thứ
+    tiếng người dùng vừa dùng, thay vì in ra ký hiệu toán học.
+    """
+    aliases = CONDITION_ALIASES.get("operators", {}).get(operator or "", [])
+    return aliases[0] if aliases else (operator or "")
+
+
 def action_display_name(action: str | None) -> str:
     """
     Động từ tiếng Việt cho một action ("turn_on" -> "bật").
@@ -852,15 +898,39 @@ def make_clarify_command(
     action: str | None = None,
     device: str | None = None,
     room: str | None = None,
+    condition: dict[str, Any] | None = None,
+    delay_seconds: int | None = None,
+    unsupported: str | None = None,
 ) -> dict[str, Any]:
+    """
+    Command dùng khi phải hỏi lại.
+
+    BA THAM SỐ CUỐI KHÔNG PHẢI SLOT, NHƯNG VẪN PHẢI ĐI QUA.
+
+    Server dựng lại command này để tự soạn câu hỏi (nguyên tắc "server quyết
+    định tập lựa chọn"). Bản trước chỉ mang action/device/room sang, nên mọi
+    thứ khác bị vứt ngay tại đây - kể cả khi model đã hiểu đúng và trả về đủ.
+
+    Quan sát được khi chạy thật:
+
+        User: sau 5 phút nếu nhiệt độ trên 30 thì bật quạt
+        Bot : Bạn muốn bật quạt ở phòng nào?
+        User: phòng ngủ
+        Bot : Đã bật quạt phòng ngủ.        <- mất CẢ điều kiện lẫn độ trễ
+
+    Người dùng yêu cầu một quy tắc có hẹn giờ và nhận về một lệnh chạy ngay.
+    Không có lỗi nào, câu trả lời nghe hoàn toàn bình thường.
+    """
     return {
         "intent": "clarify",
         "action": action,
         "device": device,
         "room": room,
         "face_auth": False,
-        "condition": None,
+        "condition": condition,
         "response": response,
+        "delay_seconds": delay_seconds,
+        "unsupported": unsupported,
     }
 
 
@@ -1214,6 +1284,19 @@ def validate_mock_slots(
 
 SLOT_FIELDS = ("action", "device", "room", "condition")
 
+# Trường KHÔNG phải slot nhưng vẫn phải sống sót qua một lượt hỏi lại.
+#
+# Quan sát được khi chạy thật:
+#     User: sau 5 phút nếu nhiệt độ trên 30 thì bật quạt
+#     Bot : Bạn muốn bật quạt ở phòng nào?
+#     User: phòng ngủ
+#     Bot : Đã bật quạt phòng ngủ.        <- mất CẢ điều kiện lẫn độ trễ
+#
+# Người dùng yêu cầu một quy tắc có hẹn giờ và nhận về một lệnh chạy ngay.
+# Câu trả lời nghe hoàn toàn bình thường, không có lỗi nào - cùng mẫu với
+# những lỗi âm thầm khác trong hệ thống.
+CONTEXT_FIELDS = ("delay_seconds", "unsupported")
+
 
 def is_topic_change(command: dict[str, Any]) -> bool:
     """
@@ -1249,7 +1332,14 @@ def resolve_intent_after_merge(command: dict[str, Any]) -> dict[str, Any]:
         return resolved
 
     if resolved.get("condition") is not None:
+        # Điều kiện CỘNG độ trễ là một quy tắc có giờ khởi động, thứ hệ thống
+        # chưa làm được. Giữ lại điều kiện và để nhánh hỗ-trợ-một-phần hỏi,
+        # thay vì im lặng bỏ mất phần trễ.
         resolved["intent"] = "create_rule"
+        if resolved.get("delay_seconds"):
+            resolved["unsupported"] = resolved.get("unsupported") or "hẹn giờ"
+    elif resolved.get("delay_seconds"):
+        resolved["intent"] = "schedule"
     elif resolved.get("action") == "get_status":
         resolved["intent"] = "query_status"
     else:
@@ -1461,7 +1551,7 @@ def merge_with_pending(
 
     merged = dict(command)
 
-    for field in SLOT_FIELDS:
+    for field in SLOT_FIELDS + CONTEXT_FIELDS:
         if merged.get(field) is None and pending.get(field) is not None:
             merged[field] = pending[field]
 
@@ -1503,6 +1593,9 @@ def determine_next_step(
 
     if intent == "create_rule":
         return "create_rule"
+
+    if intent == "schedule":
+        return "create_schedule"
 
     if command.get("face_auth") is True:
         return "auth_required"
@@ -1690,7 +1783,34 @@ def build_response_schema(
                 "required": ["sensor", "operator", "value"],
             },
             "response": {"type": "STRING"},
+            # PHẢI khai báo ở đây, không chỉ trong prompt.
+            #
+            # response_schema RÀNG BUỘC model đúng danh sách properties này -
+            # đó là điểm mạnh của structured output (model không bịa được
+            # trường lạ), nhưng cũng có nghĩa: trường nào không khai báo thì bị
+            # LOẠI BỎ dù model có sinh ra.
+            #
+            # Quan sát được khi thêm luồng "hỗ trợ một phần": prompt đã dạy
+            # model gắn "unsupported", model nhiều khả năng có gắn, nhưng
+            # parse_and_validate() luôn nhận về None. Triệu chứng còn tệ hơn
+            # trước khi sửa: model chuyển từ "reject kèm lý do đúng" sang
+            # "create_rule bỏ im lặng mệnh đề hẹn giờ".
+            "unsupported": {
+                "type": "STRING",
+                "nullable": True,
+            },
+            # Độ trễ cho intent="schedule", tính bằng giây.
+            #
+            # Model báo cáo KHOẢNG THỜI GIAN, server tính ra thời điểm tuyệt
+            # đối. Để model tự sinh timestamp thì nó phải biết bây giờ là mấy
+            # giờ - thứ nó không biết, và sẽ bịa ra.
+            "delay_seconds": {
+                "type": "INTEGER",
+                "nullable": True,
+            },
         },
+        # KHÔNG đưa "unsupported" vào required: phần lớn câu lệnh không có gì
+        # bị bỏ, ép model luôn trả trường này là mời nó bịa ra.
         "required": sorted(command_schema.get("required_fields", [])),
     }
 
@@ -2098,6 +2218,9 @@ def parse_and_validate(
                 action=command.get("action"),
                 device=command.get("device"),
                 room=command.get("room"),
+                condition=command.get("condition"),
+                delay_seconds=command.get("delay_seconds"),
+                unsupported=command.get("unsupported"),
             )
 
         latency_ms = int((time.time() - start) * 1000)

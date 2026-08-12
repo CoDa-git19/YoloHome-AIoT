@@ -12,6 +12,7 @@
     "control_device",
     "query_status",
     "create_rule",
+    "schedule",
     "clarify",
     "reject",
     "registry_request"

@@ -4,8 +4,15 @@ import time
 from collections import deque
 from typing import Any
 
+from datetime import datetime, timedelta
+
 from modules.llm_integration.llm_module import (
+    action_display_name,
     detect_confirmation,
+    device_in_room_text,
+    schedule_text,
+    operator_display_name,
+    sensor_display_name,
     device_display_name,
     failure_response,
     load_device_registry,
@@ -14,7 +21,12 @@ from modules.llm_integration.llm_module import (
     state_display_name,
 )
 from modules.llm_integration.llm_strategy import GeminiLLMStrategy
-from services.logging_service import log_command, log_error, update_command_result
+from services.logging_service import (
+    add_schedule,
+    log_command,
+    log_error,
+    update_command_result,
+)
 from services.rule_service import RuleService
 from config.settings import COMMAND_HISTORY_SIZE
 from services.session_service import SessionService
@@ -205,7 +217,7 @@ class CommandService:
         # gọi LLM. Đây là dữ liệu có cấu trúc, không phải ngôn ngữ cần diễn
         # giải - và dữ liệu thật cho thấy đưa nó qua model thì cùng chữ "có"
         # ra ba kết quả khác nhau. Xử lý sớm còn tiết kiệm một lượt gọi API.
-        confirmation_result = self._handle_registry_confirmation(
+        confirmation_result = self._handle_pending_confirmation(
             transcript,
             session_id,
         )
@@ -278,6 +290,60 @@ class CommandService:
             execution_status = "waiting_auth"
             response_text = "Thiết bị này yêu cầu xác thực khuôn mặt để kích hoạt."
 
+        elif next_step == "create_schedule":
+            # Lệnh hẹn giờ: ghi vào bảng schedule, ScheduleObserver chạy khi
+            # tới hạn.
+            #
+            # Server tính thời điểm tuyệt đối từ độ trễ mà model báo cáo. Để
+            # model tự sinh timestamp thì nó phải biết bây giờ là mấy giờ -
+            # thứ nó không biết, nên sẽ bịa ra.
+            delay = int(command.get("delay_seconds") or 0)
+            run_at = (datetime.now() + timedelta(seconds=delay)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            try:
+                schedule_id = add_schedule(run_at, command)
+            except Exception as exc:
+                log_error("gateway", f"add_schedule failed: {exc}")
+                schedule_id = 0
+
+            if schedule_id > 0:
+                result_status = "success"
+                execution_status = "scheduled"
+                response_text = (
+                    f"Đã hẹn giờ: {schedule_text(command, delay)} "
+                    f"(ID: {schedule_id})."
+                )
+            else:
+                result_status = "fail: schedule_error"
+                execution_status = "failed"
+                response_text = "Không thể đặt lịch hẹn giờ."
+
+        elif next_step == "create_rule" and command.get("unsupported"):
+            # Yêu cầu chỉ được hỗ trợ MỘT PHẦN.
+            #
+            # Model đã trích được phần hợp lệ (điều kiện, thiết bị, phòng) và
+            # tự báo phần nó phải bỏ - ví dụ "sau 5 phút" là hẹn giờ, mà hệ
+            # thống không có intent nào cho lịch trình.
+            #
+            # KHÔNG tạo rule ngay: người dùng nói "sau 5 phút" mà nhận được
+            # một rule chạy tức thì thì đó là im lặng làm sai ý họ. Cũng KHÔNG
+            # từ chối cả câu: phần còn lại hợp lệ và đã hiểu được, vứt đi rồi
+            # bắt gõ lại là lãng phí.
+            #
+            # Hỏi, rồi để người dùng quyết. Cùng cơ chế Có/Không với yêu cầu
+            # đăng ký, và quyết định vẫn đối chiếu từ khoá phía server.
+            result_status = "partial_intent: awaiting_confirmation"
+            execution_status = "clarify"
+            response_text = self._partial_intent_question(command)
+
+            self.session_service.set_pending_confirmation(
+                session_id,
+                "partial_intent",
+                {"command": command, "command_id": command_id},
+            )
+
         elif next_step == "create_rule":
             rule_id = self.rule_service.create_rule(
                 command_id=command_id if command_id > 0 else None,
@@ -337,8 +403,9 @@ class CommandService:
                 "Yêu cầu đăng ký phòng hoặc thiết bị mới đang chờ quản trị viên xem xét."
             )
 
-            self.session_service.set_pending_registry(
+            self.session_service.set_pending_confirmation(
                 session_id,
+                "registry",
                 {
                     "room": command.get("room"),
                     "device": command.get("device"),
@@ -427,38 +494,81 @@ class CommandService:
             "awaiting_reply": self.session_service.get_pending(session_id) is not None,
         }
 
-    def _handle_registry_confirmation(
+    @staticmethod
+    def _partial_intent_question(command: dict[str, Any]) -> str:
+        """
+        Câu hỏi cho một yêu cầu chỉ được hỗ trợ một phần.
+
+        Nêu RÕ phần bị bỏ rồi mô tả phần sẽ chạy, để người dùng thấy đúng thứ
+        họ sắp đồng ý. Nói suông "không hỗ trợ" là đẩy họ vào ngõ cụt - cùng
+        lỗi đã sửa ở gợi ý slot và ở câu trả lời thất bại.
+        """
+        dropped = command.get("unsupported") or "phần đó"
+        condition = command.get("condition") or {}
+
+        verb = action_display_name(command.get("action")) or "điều khiển"
+        target = device_in_room_text(command.get("device"), command.get("room"))
+
+        sensor = condition.get("sensor")
+        operator = condition.get("operator")
+        value = condition.get("value")
+
+        if sensor and operator is not None and value is not None:
+            sensor_name = sensor_display_name(sensor)
+            comparison = operator_display_name(operator)
+            rule_text = f"khi {sensor_name} {comparison} {value} thì {verb} {target}"
+        else:
+            rule_text = f"{verb} {target}"
+
+        return (
+            f"Hệ thống chưa hỗ trợ {dropped}. "
+            f"Mình tạo quy tắc {rule_text} nhé?"
+        )
+
+    def _handle_pending_confirmation(
         self,
         transcript: str,
         session_id: str | None,
     ) -> dict[str, Any] | None:
         """
-        Xử lý câu trả lời Có/Không cho yêu cầu đăng ký đang chờ.
+        Xử lý câu trả lời Có/Không cho câu hỏi đang chờ.
 
-        Trả None nếu không áp dụng (không có yêu cầu chờ, hoặc câu này không
+        Trả None nếu không áp dụng (không có câu hỏi chờ, hoặc câu này không
         phải lời đồng ý/từ chối) - khi đó pipeline chạy bình thường.
 
         KHÔNG gọi LLM và KHÔNG tạo dòng command_log mới: nó CẬP NHẬT đúng dòng
         đã tạo lúc bot đặt câu hỏi. Một yêu cầu, một dòng, trạng thái phản ánh
         quyết định của người dùng.
         """
-        pending_registry = self.session_service.get_pending_registry(session_id)
-        if not pending_registry:
+        pending = self.session_service.get_pending_confirmation(session_id)
+        if not pending:
             return None
+
+        kind, payload = pending
 
         answer = detect_confirmation(transcript)
         if answer is None:
             # Người dùng trả lời bằng chuyện khác ("phòng khách") -> để pipeline
-            # xử lý bình thường. Yêu cầu đăng ký bị bỏ qua, không hỏi lại.
-            self.session_service.clear_registry(session_id)
+            # xử lý bình thường. Câu hỏi bị bỏ qua, không hỏi lại.
+            self.session_service.clear_confirmation(session_id)
             return None
 
-        self.session_service.clear_registry(session_id)
+        self.session_service.clear_confirmation(session_id)
         self.session_service.touch(session_id)
 
-        command_id = int(pending_registry.get("command_id") or -1)
-        room = pending_registry.get("room")
-        device = pending_registry.get("device")
+        if kind == "partial_intent":
+            return self._confirm_partial_intent(answer, payload, session_id)
+
+        return self._confirm_registry(answer, payload, session_id)
+
+    def _confirm_registry(
+        self,
+        answer: str,
+        payload: dict[str, Any],
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        command_id = int(payload.get("command_id") or -1)
+        room = payload.get("room")
 
         if answer == "yes":
             result_status = "waiting_admin_review"
@@ -471,24 +581,11 @@ class CommandService:
             result_status = "registry_request: cancelled_by_user"
             response_text = "Đã huỷ yêu cầu đăng ký."
 
-        if command_id > 0:
-            try:
-                update_command_result(
-                    command_id=command_id,
-                    result=result_status,
-                    execution_status="registry_request",
-                )
-            except Exception as exc:
-                log_error("gateway", f"update registry request failed: {exc}")
+        self._close_confirmation_log(command_id, result_status, "registry_request")
 
-        # Hội thoại chưa xong: nếu vẫn còn câu lệnh dở dang thì hỏi tiếp ngay,
-        # thay vì bắt người dùng nói lại từ đầu.
-        pending_command = self.session_service.get_pending(session_id)
-        if pending_command:
-            response_text = (
-                f"{response_text} "
-                f"{missing_slot_question(pending_command, load_device_registry())}"
-            )
+        response_text, awaiting = self._append_pending_question(
+            response_text, session_id
+        )
 
         return {
             "command_id": command_id,
@@ -499,8 +596,97 @@ class CommandService:
             "result": result_status,
             "command": None,
             "session_id": session_id,
-            "awaiting_reply": pending_command is not None,
+            "awaiting_reply": awaiting,
         }
+
+    def _confirm_partial_intent(
+        self,
+        answer: str,
+        payload: dict[str, Any],
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        """
+        Người dùng đã quyết định về một yêu cầu chỉ hỗ trợ được một phần.
+
+        "Có" -> tạo rule với phần hợp lệ. Command đã qua validator và
+        enforce_policy ở lượt trước, nên không cần kiểm tra lại - nhưng cũng
+        KHÔNG được dựng lại từ transcript, vì transcript đó chứa cả phần
+        không hỗ trợ.
+        """
+        command_id = int(payload.get("command_id") or -1)
+        command = payload.get("command") or {}
+
+        if answer != "yes":
+            result_status = "partial_intent: cancelled_by_user"
+            response_text = "Đã huỷ. Bạn có thể nói lại yêu cầu theo cách khác."
+            self._close_confirmation_log(command_id, result_status, "rejected")
+        else:
+            rule_id = self.rule_service.create_rule(
+                command_id=command_id if command_id > 0 else None,
+                command=command,
+            )
+
+            if rule_id > 0:
+                result_status = "success"
+                response_text = (
+                    f"Đã thiết lập quy tắc tự động hóa thành công (ID: {rule_id})."
+                )
+                self._close_confirmation_log(command_id, result_status, "success")
+            else:
+                result_status = "fail: rule_creation_error"
+                response_text = "Không thể đăng ký quy tắc tự động hóa."
+                self._close_confirmation_log(command_id, result_status, "failed")
+
+        response_text, awaiting = self._append_pending_question(
+            response_text, session_id
+        )
+
+        return {
+            "command_id": command_id,
+            "ok": True,
+            "next_step": "create_rule" if answer == "yes" else "partial_intent_cancelled",
+            "response": response_text,
+            "execution_status": "success" if answer == "yes" else "rejected",
+            "result": result_status,
+            "command": command if answer == "yes" else None,
+            "session_id": session_id,
+            "awaiting_reply": awaiting,
+        }
+
+    @staticmethod
+    def _close_confirmation_log(
+        command_id: int,
+        result_status: str,
+        execution_status: str,
+    ) -> None:
+        if command_id <= 0:
+            return
+
+        try:
+            update_command_result(
+                command_id=command_id,
+                result=result_status,
+                execution_status=execution_status,
+            )
+        except Exception as exc:
+            log_error("gateway", f"update confirmation result failed: {exc}")
+
+    def _append_pending_question(
+        self,
+        response_text: str,
+        session_id: str | None,
+    ) -> tuple[str, bool]:
+        """
+        Hội thoại chưa xong: nếu vẫn còn câu lệnh dở dang thì hỏi tiếp ngay,
+        thay vì bắt người dùng nói lại từ đầu.
+        """
+        pending_command = self.session_service.get_pending(session_id)
+
+        if not pending_command:
+            return response_text, False
+
+        question = missing_slot_question(pending_command, load_device_registry())
+        return f"{response_text} {question}", True
 
     def create_command(self, command_data: dict[str, Any]) -> Command:
         """

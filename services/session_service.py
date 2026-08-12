@@ -40,17 +40,24 @@ class SessionService:
         # session_id -> {"command": dict, "updated_at": float, "turns": int}
         self._sessions: dict[str, dict[str, Any]] = {}
 
-        # session_id -> {"payload": dict, "updated_at": float}
+        # session_id -> {"kind": str, "payload": dict, "updated_at": float}
         #
-        # TÁCH RIÊNG khỏi _sessions có chủ đích. Yêu cầu đăng ký đang chờ người
-        # dùng trả lời Có/Không là một trạng thái KHÁC với câu lệnh đang chờ
-        # làm rõ: nó không được tính vào SESSION_MAX_TURNS.
+        # TÁCH RIÊNG khỏi _sessions có chủ đích. Một câu hỏi Có/Không đang chờ
+        # trả lời là trạng thái KHÁC với câu lệnh đang chờ làm rõ: nó không
+        # được tính vào SESSION_MAX_TURNS.
         #
         # Dữ liệu thật cho thấy vì sao: cả hai lần chạm giới hạn lượt đều do
         # câu đồng ý, không phải do câu lệnh mơ hồ.
         #     (1892, 'ok', 'failed', 'fail: clarify_limit')
         #     (1904, 'ok', 'failed', 'fail: clarify_limit')
-        self._registries: dict[str, dict[str, Any]] = {}
+        #
+        # Trường "kind" cho biết người dùng đang trả lời câu hỏi NÀO:
+        #   "registry"       - có gửi yêu cầu đăng ký phòng/thiết bị mới không
+        #   "partial_intent" - có chạy phần hợp lệ của một yêu cầu mà hệ thống
+        #                      chỉ hỗ trợ được một phần không
+        # Mỗi phiên chỉ có tối đa MỘT câu hỏi đang chờ: hỏi hai câu Có/Không
+        # cùng lúc thì "có" trở thành mơ hồ.
+        self._confirmations: dict[str, dict[str, Any]] = {}
 
     # =========================================================================
     # Read
@@ -137,51 +144,85 @@ class SessionService:
 
     def clear_all(self) -> None:
         self._sessions.clear()
-        self._registries.clear()
+        self._confirmations.clear()
 
     # =========================================================================
-    # Yêu cầu đăng ký đang chờ xác nhận
+    # Câu hỏi Có/Không đang chờ trả lời
     # =========================================================================
+
+    def set_pending_confirmation(
+        self,
+        session_id: str | None,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """
+        Ghi nhớ câu hỏi Có/Không vừa đặt cho người dùng, để lượt sau xử lý
+        câu trả lời.
+
+        Args:
+            kind: "registry" hoặc "partial_intent".
+            payload: đủ dữ liệu để hoàn tất hành động khi người dùng đồng ý.
+                Luôn nên có command_id để cập nhật đúng dòng command_log.
+        """
+        if not session_id:
+            return
+
+        self._confirmations[session_id] = {
+            "kind": kind,
+            "payload": dict(payload),
+            "updated_at": time.time(),
+        }
+
+    def get_pending_confirmation(
+        self,
+        session_id: str | None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """
+        Trả (kind, payload) của câu hỏi đang chờ, hoặc None nếu không có/hết hạn.
+        """
+        if not session_id:
+            return None
+
+        entry = self._confirmations.get(session_id)
+        if entry is None:
+            return None
+
+        if self._is_expired(entry):
+            self.clear_confirmation(session_id)
+            return None
+
+        return entry["kind"], dict(entry["payload"])
+
+    def clear_confirmation(self, session_id: str | None) -> None:
+        """Xoá câu hỏi đang chờ. Gọi sau khi người dùng đã trả lời."""
+        if session_id:
+            self._confirmations.pop(session_id, None)
+
+    # -------------------------------------------------------------------------
+    # Lớp bọc tương thích ngược cho yêu cầu đăng ký
+    #
+    # Giữ lại vì test và code hiện có đang dùng. Chúng chỉ là
+    # set_pending_confirmation(kind="registry") viết ngắn.
+    # -------------------------------------------------------------------------
 
     def set_pending_registry(
         self,
         session_id: str | None,
         payload: dict[str, Any],
     ) -> None:
-        """
-        Ghi nhớ yêu cầu đăng ký vừa hỏi người dùng, để lượt sau xử lý câu
-        trả lời Có/Không.
-
-        payload nên chứa: room, device, action, command_id - đủ để cập nhật
-        đúng dòng command_log khi người dùng quyết định.
-        """
-        if not session_id:
-            return
-
-        self._registries[session_id] = {
-            "payload": dict(payload),
-            "updated_at": time.time(),
-        }
+        self.set_pending_confirmation(session_id, "registry", payload)
 
     def get_pending_registry(self, session_id: str | None) -> dict[str, Any] | None:
-        """Yêu cầu đăng ký đang chờ xác nhận, hoặc None nếu không có/hết hạn."""
-        if not session_id:
+        pending = self.get_pending_confirmation(session_id)
+
+        if pending is None or pending[0] != "registry":
             return None
 
-        entry = self._registries.get(session_id)
-        if entry is None:
-            return None
-
-        if self._is_expired(entry):
-            self.clear_registry(session_id)
-            return None
-
-        return dict(entry["payload"])
+        return pending[1]
 
     def clear_registry(self, session_id: str | None) -> None:
-        """Xoá yêu cầu đăng ký đang chờ. Gọi sau khi người dùng đã trả lời."""
-        if session_id:
-            self._registries.pop(session_id, None)
+        self.clear_confirmation(session_id)
 
     # =========================================================================
     # Internal
