@@ -22,6 +22,8 @@ torch==2.0.0
 transformers==4.38.0
 sounddevice 
 librosa
+pandas
+jiwer
 
 # --- LLM Integration ---
 # QUAN TRỌNG: pin đúng version đang chạy được trên máy bạn.
