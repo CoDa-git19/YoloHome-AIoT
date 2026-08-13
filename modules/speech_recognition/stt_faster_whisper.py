@@ -52,7 +52,7 @@ class FasterWhisperSTT(STTStrategy):
     orchestrator nên khởi tạo FasterWhisperSTT() một lần lúc boot và tái sử
     dụng cho toàn bộ vòng đời chương trình - giống hệt cách dùng PhoWhisperSTT.
 
-        stt = FasterWhisperSTT(model_path="./phowhisper-base-ct2")
+        stt = FasterWhisperSTT(model_path="./finetune_final_ct2")
         stt.transcribe(audio_bytes)  # -> "bật đèn phòng khách"
 
     Args:
@@ -104,8 +104,7 @@ class FasterWhisperSTT(STTStrategy):
                 return ""
 
             model = self._get_model()
-
-            # faster-whisper tra ve generator segments, khac voi dict cua transformers
+ 
             segments, _info = model.transcribe(
                 waveform,
                 language="vi",
@@ -150,7 +149,7 @@ class FasterWhisperSTT(STTStrategy):
         import soundfile as sf
 
         waveform, _sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
-        if waveform.ndim > 1:  # phòng hờ, dù ffmpeg đã ép mono
+        if waveform.ndim > 1:
             waveform = waveform.mean(axis=1)
         return waveform
 
