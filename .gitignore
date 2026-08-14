@@ -9,6 +9,7 @@ build/
 dist/
 *.egg-info/
 .eggs/
+pip_*.txt
 
 # =========================
 # Virtual environments
@@ -32,6 +33,7 @@ ENV/
 *.sqlite
 *.sqlite3
 database/*.db
+database/*.db-journal
 database/*.sqlite
 database/*.sqlite3
 
@@ -65,7 +67,6 @@ data/*
 !data/sample/
 data/sample/*
 !data/sample/.gitkeep
-benchmark/report.md
 
 *.wav
 *.mp3
@@ -93,3 +94,5 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+measure_*.txt

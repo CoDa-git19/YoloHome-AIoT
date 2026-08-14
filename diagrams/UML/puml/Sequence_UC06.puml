@@ -1,0 +1,70 @@
+@startuml Sequence_UC06
+' Flow 3 / UC-06 - Automation rule executed unattended
+' Ten ham lay dung tu muc "Flow 3" trong 02_SystemArchitecture.tex
+
+skinparam dpi 160
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #333333
+  LifeLineBorderColor #2E7D6B
+  ParticipantBorderColor #2E7D6B
+  ParticipantBackgroundColor #F2FBF8
+}
+
+participant "HardwareModule\n(Subject)"   as HM
+participant "RuleObserver"                as RO
+participant "RuleService"                 as RS
+participant "CommandService"              as CS
+participant "SensorLoggingObserver"       as SLO
+participant "SensorPersistObserver"       as SPO
+participant "AdafruitPublisher"           as AP
+database    "SQLite"                      as DB
+
+note over HM
+  No human participates
+  in this sequence.
+end note
+
+loop every ~2 s (heartbeat)
+  HM -> HM : poll_sensors()
+  HM -> HM : Subject.notify(sensor_data)
+
+  HM -> RO : update(sensor_data)
+  activate RO
+  RO -> RS : evaluate_sensor_data()
+  activate RS
+  alt condition transitions false -> true
+      RS -> CS : execute_authorized_command(command)
+      activate CS
+      CS -> CS : re-check authentication policy
+      alt action does not require authentication
+          CS -> HM : execute_command(command)
+          CS -> DB : update_command_result(...)
+      else action requires authentication
+          CS -> DB : log_error("automation gate refused")
+          note right of CS
+            Layer 5. A persisted rule
+            cannot open the door.
+          end note
+      end
+      deactivate CS
+      RS -> DB : update last_state, last_triggered_at
+  else condition unchanged or within hysteresis
+      RS --> RO : no action (edge-triggered)
+  end
+  deactivate RS
+  deactivate RO
+
+  HM -> SLO : update(sensor_data)
+  note right of SLO : in-memory, every poll
+  HM -> SPO : update(sensor_data)
+  SPO -> DB : insert sensor_log (throttled)
+  HM -> AP  : update(sensor_data)
+  note right of AP : cloud, min 15 s apart
+end
+
+note over HM, AP
+  Subject.notify() catches exceptions per observer.
+  A failing publisher cannot stop rule evaluation.
+end note
+@enduml

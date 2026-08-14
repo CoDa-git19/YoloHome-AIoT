@@ -240,6 +240,11 @@ RULE_HYSTERESIS = env_float("RULE_HYSTERESIS", 0.5, minimum=0.0)
 ADAFRUIT_IO_USERNAME = env_str("ADAFRUIT_IO_USERNAME")
 ADAFRUIT_IO_KEY = env_str("ADAFRUIT_IO_KEY")
 
+# "simulation" -> HardwareModule giữ trạng thái trong RAM, KHÔNG nối MQTT.
+# "real"       -> subscribe feed cảm biến của Yolo:Bit và publish lệnh xuống.
+# Mặc định simulation để chạy demo/test trên máy không cắm Yolo:Bit.
+HARDWARE_MODE = env_choice("HARDWARE_MODE", "simulation", {"simulation", "real"})
+
 FLASK_ENV = env_str("FLASK_ENV", "development")
 DATABASE_URL = env_str("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
@@ -254,6 +259,45 @@ FACE_AUTH_THRESHOLD = env_float(
     minimum=0.0,
     maximum=1.0,
 )
+
+# true -> MockFaceRecognizer: LUÔN nhận ra "member_1" với confidence 0.95.
+#
+# ĐÂY LÀ CỜ VÔ HIỆU HOÁ AN NINH, không phải cờ tiện lợi. Bật lên thì BẤT KỲ AI
+# đứng trước camera cũng mở được cửa. Chỉ dùng để demo pipeline khi chưa có
+# face_model.pkl. check_config() cảnh báo mỗi lần khởi động.
+USE_MOCK_FACE = env_bool("USE_MOCK_FACE", False)
+
+# Bắt buộc chớp mắt trước khi chấp nhận khung hình (chống ảnh in / video phát
+# trên điện thoại). Tắt là hạ mức bảo mật thật, phải ghi rõ trong báo cáo.
+FACE_REQUIRE_BLINK = env_bool("FACE_REQUIRE_BLINK", True)
+
+# Thời gian tối đa chờ tìm thấy khuôn mặt trước khi bỏ cuộc (giây).
+FACE_SCAN_TIMEOUT_SECONDS = env_int("FACE_SCAN_TIMEOUT_SECONDS", 15, minimum=1)
+
+# Chỉ số webcam truyền cho cv2.VideoCapture. Máy có webcam rời, hoặc có phần
+# mềm camera ảo (OBS, Zoom, DroidCam), thường đẩy webcam thật sang index 1-2.
+CAMERA_INDEX = env_int("CAMERA_INDEX", 0, minimum=0)
+
+# Model SVM đã train. Khai báo ở đây để check_config() cảnh báo được khi thiếu
+# file, thay vì để lỗi nổ lúc có người đứng trước camera.
+FACE_MODEL_PATH = MODELS_DIR / "face_model.pkl"
+
+
+# =============================================================================
+# Speech-to-Text
+# =============================================================================
+
+# true -> MockSTTStrategy: trả một transcript đặt sẵn thay vì giải mã audio.
+# Cho phép chạy toàn bộ pipeline mà không cần micro hay model.
+USE_MOCK_STT = env_bool("USE_MOCK_STT", False)
+
+# Tên model trên HuggingFace, hoặc đường dẫn tới checkpoint đã fine-tune.
+# CÙNG tên biến môi trường mà stt_module đã đọc - khai báo tên khác sẽ tạo hai
+# nguồn sự thật cho một sự việc.
+PHOWHISPER_MODEL = env_str("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+
+# Số giây ghi âm mỗi lượt ở chế độ giọng nói.
+VOICE_RECORD_SECONDS = env_float("VOICE_RECORD_SECONDS", 4.0, minimum=1.0)
 
 
 # =============================================================================
@@ -285,6 +329,45 @@ def check_config() -> list[str]:
         warnings.append(
             f"Không tìm thấy {ENV_PATH}. "
             "Copy .env.example thành .env rồi điền GEMINI_API_KEY."
+        )
+
+    # -------------------------------------------------------------------------
+    # Face Auth
+    # -------------------------------------------------------------------------
+
+    if USE_MOCK_FACE:
+        warnings.append(
+            "USE_MOCK_FACE=true: MockFaceRecognizer LUÔN nhận ra 'member_1', "
+            "nghĩa là BẤT KỲ AI cũng mở được cửa. Chỉ dùng để demo pipeline."
+        )
+
+    if not USE_MOCK_FACE and not FACE_MODEL_PATH.exists():
+        warnings.append(
+            f"Không tìm thấy {FACE_MODEL_PATH}. Face Auth sẽ tự tắt và mọi "
+            "lệnh mở cửa bị từ chối. Xin file model từ người train."
+        )
+
+    if not USE_MOCK_FACE and not FACE_REQUIRE_BLINK:
+        warnings.append(
+            "FACE_REQUIRE_BLINK=false: một tấm ảnh in cũng qua được xác thực. "
+            "Chỉ dùng khi debug, tuyệt đối không dùng lúc demo."
+        )
+
+    if FACE_AUTH_THRESHOLD < 0.5:
+        warnings.append(
+            f"FACE_AUTH_THRESHOLD={FACE_AUTH_THRESHOLD} là quá thấp cho một "
+            "khoá cửa. Giá trị khuyến nghị: 0.80."
+        )
+
+    # -------------------------------------------------------------------------
+    # Phần cứng
+    # -------------------------------------------------------------------------
+
+    if HARDWARE_MODE == "real" and not (ADAFRUIT_IO_USERNAME and ADAFRUIT_IO_KEY):
+        warnings.append(
+            "HARDWARE_MODE=real nhưng thiếu ADAFRUIT_IO_USERNAME/KEY. "
+            "Sẽ không nhận được dữ liệu cảm biến, và mọi lệnh điều khiển "
+            "không tới được thiết bị."
         )
 
     return warnings

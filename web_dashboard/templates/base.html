@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Home AI Agent Dashboard</title>
+    <script>
+        // Áp dụng theme TRƯỚC khi Tailwind/CSS render, tránh nháy sáng->tối (FOUC).
+        (function () {
+            const saved = localStorage.getItem('yolohome-theme');
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDark = saved ? saved === 'dark' : prefersDark;
+            if (isDark) document.documentElement.classList.add('dark');
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff', 100: '#dbeafe', 400: '#60a5fa',
+                            500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8',
+                        },
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; }
+        .code-block { background: #0f172a; border: 1px solid #1e293b; font-family: 'Consolas', 'Courier New', monospace; }
+        [x-cloak] { display: none !important; }
+
+        /* Desktop (>=1024px): sidebar nằm trong flow, đóng/mở kiểu "đẩy" nội dung. */
+        #sidebar { width: 16rem; transition: width 0.22s ease, opacity 0.18s ease; }
+        #sidebar.sidebar-collapsed { width: 0; opacity: 0; pointer-events: none; }
+        #sidebar-backdrop { display: none; }
+
+        /* Mobile/tablet (<1024px): sidebar là drawer đè lên nội dung, không đẩy layout. */
+        @media (max-width: 1023.98px) {
+            #sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100vh;
+                width: 16rem;
+                max-width: 85vw;
+                z-index: 50;
+                transform: translateX(-100%);
+                transition: transform 0.25s ease;
+            }
+            #sidebar:not(.sidebar-collapsed) { transform: translateX(0); }
+
+            #sidebar-backdrop.show {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 40;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 text-sm transition-colors">
+
+<div class="flex-1 flex items-start">
+    <!-- Lớp phủ mờ phía sau sidebar, chỉ xuất hiện ở chế độ drawer (mobile) -->
+    <div id="sidebar-backdrop"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="bg-slate-900 text-slate-300 flex flex-col shrink-0 overflow-y-auto overflow-x-hidden custom-scrollbar sticky top-0 h-screen">
+        <div class="p-5 border-b border-white/10 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center">
+                <i class="fas fa-house-signal text-white text-sm"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-sm text-white leading-tight">YoloHome</h1>
+                <p class="text-[10px] text-slate-400 leading-tight">AI Agent Dashboard</p>
+            </div>
+        </div>
+
+        <nav class="p-3 flex flex-col gap-1">
+            <a href="{{ url_for('agent_console') }}"
+               class="w-full text-left px-4 py-2.5 rounded-lg flex items-center gap-3 transition text-sm font-medium
+               {% if active_page == 'console' %} bg-blue-600 text-white {% else %} text-slate-400 hover:text-white hover:bg-white/5 {% endif %}">
+                <i class="fas fa-comment-dots w-4"></i> Agent Console
+            </a>
+            <a href="{{ url_for('command_log_page') }}"
+               class="w-full text-left px-4 py-2.5 rounded-lg flex items-center gap-3 transition text-sm font-medium
+               {% if active_page == 'command_log' %} bg-blue-600 text-white {% else %} text-slate-400 hover:text-white hover:bg-white/5 {% endif %}">
+                <i class="fas fa-list-ul w-4"></i> Command Log
+            </a>
+            <a href="{{ url_for('face_auth_log_page') }}"
+               class="w-full text-left px-4 py-2.5 rounded-lg flex items-center gap-3 transition text-sm font-medium
+               {% if active_page == 'face_auth' %} bg-blue-600 text-white {% else %} text-slate-400 hover:text-white hover:bg-white/5 {% endif %}">
+                <i class="fas fa-user-shield w-4"></i> Face Auth Log
+            </a>
+        </nav>
+
+        <div class="px-4 pt-4">
+            <h3 class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Device Status</h3>
+            <div class="flex flex-col gap-2">
+                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
+                    <div class="flex items-center gap-2 text-xs"><i class="far fa-lightbulb text-amber-400 w-4"></i> Living Room Light</div>
+                    <span id="sb-light-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
+                </div>
+                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
+                    <div class="flex items-center gap-2 text-xs"><i class="fas fa-fan text-sky-400 w-4"></i> Fan</div>
+                    <span id="sb-fan-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
+                </div>
+                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
+                    <div class="flex items-center gap-2 text-xs"><i class="fas fa-door-closed text-slate-400 w-4"></i> Main Door</div>
+                    <span id="sb-door-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="px-4 pt-5">
+            <h3 class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Sensor Status</h3>
+            <div class="flex flex-col gap-2">
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-person-walking text-slate-400 w-4"></i> Motion Sensor</div>
+                    <span id="sb-motion" class="font-semibold text-slate-200">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-thermometer-half text-slate-400 w-4"></i> Temperature</div>
+                    <span id="sb-temp" class="font-semibold text-slate-200">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-tint text-slate-400 w-4"></i> Humidity</div>
+                    <span id="sb-humidity" class="font-semibold text-slate-200">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-sun text-slate-400 w-4"></i> Light Level</div>
+                    <span id="sb-light-level" class="font-semibold text-slate-200">--</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="px-4 pt-5">
+            <h3 class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">AI Modules</h3>
+            <div class="flex flex-col gap-2">
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-microphone text-slate-400 w-4"></i> STT</div>
+                    <span id="sb-stt" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-600/40 text-slate-300">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-brain text-slate-400 w-4"></i> LLM</div>
+                    <span id="sb-llm" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-600/40 text-slate-300">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-user-shield text-slate-400 w-4"></i> Face Auth</div>
+                    <span id="sb-face" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-600/40 text-slate-300">--</span>
+                </div>
+                <div class="flex justify-between items-center px-3 py-2 text-xs">
+                    <div class="flex items-center gap-2"><i class="fas fa-microchip text-slate-400 w-4"></i> Hardware</div>
+                    <span id="sb-hw" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-600/40 text-slate-300">--</span>
+                </div>
+            </div>
+            <p id="sb-module-warning" class="hidden mt-2 text-[10px] leading-snug text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2"></p>
+        </div>
+
+        <div class="mt-auto p-4 border-t border-white/10 text-xs text-slate-400 flex flex-col gap-2">
+            <div class="flex items-center gap-2">
+                <div id="sb-gateway-dot" class="w-2 h-2 rounded-full bg-slate-600"></div> Gateway Connected
+            </div>
+            <div class="flex items-center gap-2">
+                <div id="sb-adafruit-dot" class="w-2 h-2 rounded-full bg-slate-600"></div> Adafruit IO Connected
+            </div>
+        </div>
+    </aside>
+
+    <!-- Trang cuộn lên/xuống bình thường, không gò trong khung cố định -->
+    <main class="flex-1 flex flex-col min-w-0">
+        <!-- Header (dính trên đầu khi cuộn) -->
+        <div class="sticky top-0 z-20 bg-slate-100 dark:bg-slate-950 px-4 pt-4 pb-4">
+            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <button id="sidebar-toggle" title="Đóng/mở sidebar"
+                            class="w-8 h-8 rounded-lg flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h2 class="text-lg font-semibold text-slate-800 dark:text-white">Smart Home AI Agent Dashboard</h2>
+                </div>
+                <div class="flex gap-5 items-center text-xs">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <span class="text-emerald-600 dark:text-emerald-400 font-medium">System Online</span>
+                    </div>
+                    <div class="text-slate-500 dark:text-slate-400">
+                        <i class="far fa-clock mr-1"></i> <span id="clock">--:--:--</span>
+                    </div>
+                    <button id="theme-toggle" title="Toggle light/dark mode"
+                            class="w-8 h-8 rounded-lg flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                        <i id="theme-icon" class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="px-4 flex flex-col gap-4">
+            {% block content %}{% endblock %}
+        </div>
+
+        <footer class="text-center text-[11px] text-slate-200 dark:text-slate-200 py-6">
+            Smart Home AI System &nbsp;|&nbsp; YOLOHOME-AIOT - HCMUT &nbsp;|&nbsp; 2026
+        </footer>
+    </main>
+</div>
+
+<script>
+    // Đồng hồ dùng chung
+    setInterval(() => {
+        document.getElementById('clock').innerText = new Date().toLocaleTimeString('vi-VN');
+    }, 1000);
+
+    // Light/Dark toggle
+    const themeToggleBtn = document.getElementById('theme-toggle');
+    const themeIcon = document.getElementById('theme-icon');
+
+    function syncThemeIcon() {
+        const isDark = document.documentElement.classList.contains('dark');
+        themeIcon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
+    }
+    syncThemeIcon();
+
+    themeToggleBtn.addEventListener('click', () => {
+        document.documentElement.classList.toggle('dark');
+        const isDark = document.documentElement.classList.contains('dark');
+        localStorage.setItem('yolohome-theme', isDark ? 'dark' : 'light');
+        syncThemeIcon();
+    });
+
+    // Đóng/mở Sidebar
+    // - Desktop (>=1024px): sidebar nằm trong flow, đóng/mở "đẩy" nội dung, nhớ trạng thái qua localStorage.
+    // - Mobile/tablet (<1024px): sidebar là drawer đè lên nội dung (kèm backdrop),
+    //   luôn bắt đầu đóng mỗi lần tải trang, không dùng chung trạng thái đã lưu của desktop.
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+    const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+    const isMobileViewport = () => window.matchMedia('(max-width: 1023.98px)').matches;
+
+    function applySidebarCollapsed(collapsed) {
+        sidebar.classList.toggle('sidebar-collapsed', collapsed);
+        sidebarBackdrop.classList.toggle('show', isMobileViewport() && !collapsed);
+    }
+
+    function setSidebarCollapsed(collapsed, persist = true) {
+        applySidebarCollapsed(collapsed);
+        if (persist && !isMobileViewport()) {
+            localStorage.setItem('yolohome-sidebar-collapsed', String(collapsed));
+        }
+    }
+
+    setSidebarCollapsed(
+        isMobileViewport() ? true : localStorage.getItem('yolohome-sidebar-collapsed') === 'true',
+        false
+    );
+
+    sidebarToggleBtn.addEventListener('click', () => {
+        setSidebarCollapsed(!sidebar.classList.contains('sidebar-collapsed'));
+    });
+
+    sidebarBackdrop.addEventListener('click', () => setSidebarCollapsed(true, false));
+
+    // Đổi kích thước cửa sổ (vd. xoay ngang điện thoại) -> đồng bộ lại backdrop cho đúng chế độ.
+    window.addEventListener('resize', () => {
+        applySidebarCollapsed(sidebar.classList.contains('sidebar-collapsed'));
+    });
+
+    // --- Shared helpers dùng lại ở các trang con ---
+    const Dash = {
+        stateBadge(state) {
+            const s = (state || '').toLowerCase();
+            if (s === 'on' || s === 'open') {
+                return { text: s.toUpperCase(), cls: 'bg-emerald-500/15 text-emerald-400' };
+            }
+            return { text: (s || 'OFF').toUpperCase(), cls: 'bg-slate-600/40 text-slate-300' };
+        },
+        badgeFor(kind, value) {
+            const v = (value || '').toLowerCase();
+            const palettes = {
+                success: 'bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20',
+                warn: 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20',
+                danger: 'bg-rose-50 text-rose-600 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20',
+                neutral: 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-700/40 dark:text-slate-300 dark:border-slate-700',
+            };
+            if (kind === 'validation') {
+                return v === 'passed' ? palettes.success : palettes.danger;
+            }
+            if (kind === 'auth') {
+                return v === 'yes' || v === 'true' ? palettes.warn : palettes.neutral;
+            }
+            if (kind === 'result') {
+                if (v === 'success') return palettes.success;
+                if (v === 'rejected') return palettes.danger;
+                if (['pending', 'waiting_auth', 'clarify', 'registry_request'].includes(v)) return palettes.warn;
+                return palettes.danger;
+            }
+            if (kind === 'face') {
+                if (v === 'authorized') return palettes.success;
+                if (v === 'rejected') return palettes.danger;
+                return palettes.warn;
+            }
+            return palettes.neutral;
+        },
+        fmtTime(ts) {
+            if (!ts) return '-';
+            const parts = String(ts).split(' ');
+            return parts.length > 1 ? parts[1].slice(0, 8) : ts;
+        },
+        fmtPct(v) {
+            return (v === null || v === undefined) ? '--' : `${v}%`;
+        },
+        escapeHtml(str) {
+            const div = document.createElement('div');
+            div.innerText = str === null || str === undefined ? '' : String(str);
+            return div.innerHTML;
+        },
+        // Multi-turn slot filling ("bật đèn" -> "phòng nào?" -> "phòng khách")
+        // chỉ hoạt động khi các lượt dùng CHUNG một session_id. Giữ trong
+        // localStorage để phiên sống qua cả lần tải lại trang.
+        sessionId() {
+            let id = localStorage.getItem('yolohome-session-id');
+            if (!id) {
+                id = 'web-' + Math.random().toString(36).slice(2, 10);
+                localStorage.setItem('yolohome-session-id', id);
+            }
+            return id;
+        },
+    };
+    window.Dash = Dash;
+
+    const MODULE_BADGE = {
+        real: 'bg-emerald-500/15 text-emerald-400',
+        gemini: 'bg-emerald-500/15 text-emerald-400',
+        mock: 'bg-amber-500/15 text-amber-400',
+        simulation: 'bg-amber-500/15 text-amber-400',
+        unavailable: 'bg-rose-500/15 text-rose-400',
+    };
+
+    function setModuleBadge(elementId, label) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const cls = MODULE_BADGE[label] || 'bg-slate-600/40 text-slate-300';
+        el.textContent = String(label).toUpperCase();
+        el.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${cls}`;
+    }
+
+    function applyModuleStatus(modules) {
+        if (!modules) return;
+
+        setModuleBadge('sb-stt', modules.stt.mode);
+        setModuleBadge('sb-llm', modules.llm.mode);
+        setModuleBadge('sb-face', modules.face.mode);
+        setModuleBadge('sb-hw', modules.hardware.mode);
+
+        // Nêu rõ hậu quả của từng chế độ, thay vì để người dùng tự đoán vì sao
+        // lệnh mở cửa bị từ chối hoặc vì sao nút ghi âm không dùng được.
+        const warnings = [];
+        if (!modules.face.ready) {
+            warnings.push(
+                modules.face.model_present
+                    ? 'Face Auth chưa sẵn sàng: mọi lệnh mở cửa sẽ bị từ chối.'
+                    : 'Thiếu models/face_model.pkl: mọi lệnh mở cửa sẽ bị từ chối.'
+            );
+        } else if (modules.face.mode === 'mock') {
+            warnings.push('Face Auth đang ở chế độ MOCK: bất kỳ ai cũng mở được cửa.');
+        }
+        if (!modules.stt.ready) {
+            warnings.push('STT chưa sẵn sàng: chỉ dùng được ô nhập văn bản.');
+        }
+
+        const box = document.getElementById('sb-module-warning');
+        if (warnings.length) {
+            box.textContent = warnings.join(' ');
+            box.classList.remove('hidden');
+        } else {
+            box.classList.add('hidden');
+        }
+    }
+
+    function applySidebarStatus(data) {
+        const light = Dash.stateBadge(data.devices.light);
+        const fan = Dash.stateBadge(data.devices.fan);
+        const door = Dash.stateBadge(data.devices.door);
+
+        const lightEl = document.getElementById('sb-light-badge');
+        lightEl.textContent = light.text;
+        lightEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${light.cls}`;
+
+        const fanEl = document.getElementById('sb-fan-badge');
+        fanEl.textContent = fan.text;
+        fanEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${fan.cls}`;
+
+        const doorEl = document.getElementById('sb-door-badge');
+        doorEl.textContent = door.text;
+        doorEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${door.cls}`;
+
+        document.getElementById('sb-temp').textContent = `${data.sensors.temperature ?? '--'} °C`;
+        document.getElementById('sb-humidity').textContent = `${data.sensors.humidity ?? '--'} %`;
+        document.getElementById('sb-light-level').textContent = data.sensors.light ?? '--';
+        document.getElementById('sb-motion').textContent = data.sensors.motion ? 'Detected' : 'Clear';
+
+        document.getElementById('sb-gateway-dot').className =
+            `w-2 h-2 rounded-full ${data.connections.gateway ? 'bg-emerald-500' : 'bg-rose-500'}`;
+        document.getElementById('sb-adafruit-dot').className =
+            `w-2 h-2 rounded-full ${data.connections.adafruit ? 'bg-emerald-500' : 'bg-rose-500'}`;
+    }
+
+    async function refreshStatus() {
+        try {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            applySidebarStatus(data);
+            applyModuleStatus(data.modules);
+            document.dispatchEvent(new CustomEvent('status:update', { detail: data }));
+        } catch (e) {
+            console.error('Failed to refresh status:', e);
+        }
+    }
+
+    refreshStatus();
+    setInterval(refreshStatus, 4000);
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>
+

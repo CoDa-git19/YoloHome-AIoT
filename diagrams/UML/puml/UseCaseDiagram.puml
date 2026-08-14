@@ -1,0 +1,117 @@
+@startuml UseCaseDiagram
+' =====================================================================
+' YoloHome AIoT Smart Home - Use Case Diagram
+' Export PNG -> diagrams/UseCaseDiagram.png
+'
+' Chi ve 2 actor phu (LLM provider, Webcam) vi day la hai actor gan
+' truc tiep voi use case duoc gop. Yolo:Bit va Adafruit IO da xuat hien
+' day du trong Figure 1 (system context) - ve lai o day chi gay roi.
+' =====================================================================
+
+skinparam dpi 150
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam nodesep 14
+skinparam ranksep 60
+skinparam ArrowColor #555555
+skinparam ArrowFontSize 11
+skinparam usecase {
+  BackgroundColor  #FBF7FE
+  BorderColor      #7A4FA3
+  FontSize 12
+}
+skinparam actor {
+  BorderColor     #333333
+  BackgroundColor #FFFFFF
+  FontSize 12
+}
+skinparam rectangle {
+  BorderColor #999999
+  FontSize 13
+  FontStyle bold
+}
+skinparam note {
+  BackgroundColor #FFFDF0
+  BorderColor     #C9B458
+  FontSize 11
+}
+
+left to right direction
+
+' ================= Actor chinh (ben trai) =================
+actor "Resident"      as R
+actor "Sensor stream" as S
+
+' ================= He thong =================
+rectangle "AIoT Smart Home" {
+
+  ' -- Nhom 1: khong lien quan den viec hieu cau lenh --
+  together {
+    usecase "UC-09\nReview command history"  as UC9
+    usecase "UC-10\nMonitor sensor readings" as UC10
+  }
+
+  ' -- Nhom 2: deu can hieu cau lenh --
+  together {
+    usecase "UC-01\nControl a device\nby voice"       as UC1
+    usecase "UC-02\nControl a device\nfrom dashboard" as UC2
+    usecase "UC-03\nQuery device status"              as UC3
+    usecase "UC-05\nCreate an\nautomation rule"       as UC5
+    usecase "UC-08\nRequest a device\noutside registry" as UC8
+  }
+
+  ' -- Nhom 3: cac truong hop dac biet --
+  usecase "UC-04\nClarify an\nincomplete command" as UC4
+  usecase "UC-07\nOpen the main door"             as UC7
+  usecase "UC-06\nExecute an automation\nrule unattended" as UC6 #FFF0E6
+
+  ' -- Nhom 4: use case duoc gop (khong noi actor chinh) --
+  together {
+    usecase "Interpret command"    as UCI #EAF4FF
+    usecase "Authenticate by face" as UCA #FFEAEA
+  }
+}
+
+' ================= Actor phu (ben phai) =================
+actor "LLM provider"           as LLM
+actor "Webcam and\nmicrophone" as CAM
+
+' ================= Lien ket actor chinh =================
+R --> UC1
+R --> UC2
+R --> UC3
+R --> UC5
+R --> UC7
+R --> UC8
+R --> UC9
+R --> UC10
+
+S --> UC6
+
+' ================= include: LUON xay ra (base --> included) ==========
+UC1 ..> UCI : <<include>>
+UC2 ..> UCI : <<include>>
+UC3 ..> UCI : <<include>>
+UC5 ..> UCI : <<include>>
+UC7 ..> UCI : <<include>>
+UC7 ..> UCA : <<include>>
+
+' ================= extend: CO DIEU KIEN (extending --> base) =========
+UC4 ..> UCI : <<extend>>
+
+' ================= Actor phu: chi 2 duong =================
+UCI --> LLM
+UCA --> CAM
+
+' ================= Ghi chu (tieng Anh) =================
+note right of UC6
+  Initiated by the sensor stream.
+  No human actor participates.
+end note
+
+note bottom of UC4
+  <<extend>> points the opposite way
+  to <<include>>: clarification happens
+  only *if* a required slot is missing.
+end note
+@enduml

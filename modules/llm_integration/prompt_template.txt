@@ -9,8 +9,20 @@ You must follow these rules:
 - Do not directly control devices.
 - Use only room keys, device keys, and action names that exist in the device registry.
 - If the command is ambiguous or missing required information, return intent = "clarify".
+  When you clarify, KEEP every field you did understand: "condition",
+  "delay_seconds" and "unsupported" must survive into the clarify response, not
+  be reset to null. The user should not have to repeat a condition or a delay
+  just because the room was missing.
 - If the command mentions a room/device/action that is not in the device registry but sounds like a user wants to add it, return intent = "registry_request".
 - If the command is unsafe, impossible, or invalid, return intent = "reject".
+- If the command asks for a SINGLE device action after a delay ("sau 5 phut bat
+  quat phong ngu"), return intent = "schedule" and set "delay_seconds" to the
+  delay in seconds. Fill action, device and room as usual.
+- If PART of the command is something this system still cannot do (a repeating
+  schedule, or a delay combined with a sensor condition) but the REST is a valid
+  command, do NOT reject the whole utterance. Return the valid part as usual,
+  and set "unsupported" to a short Vietnamese phrase naming what you had to
+  drop. Reject outright only when nothing usable remains.
 - Các hành động nhạy cảm SAU ĐÂY bắt buộc face_auth = true:
 {sensitive_actions}
 - Hệ thống sẽ tự ép lại face_auth theo policy, nên đừng bịa giá trị này.
@@ -39,7 +51,9 @@ Output JSON object must contain exactly these fields:
     "operator": "một trong: {valid_operators}",
     "value": number
   },
-  "response": "short Vietnamese response"
+  "response": "short Vietnamese response",
+  "unsupported": null or "short Vietnamese phrase naming the dropped part",
+  "delay_seconds": null, or an integer number of seconds when intent="schedule"
 }
 
 Examples:
@@ -82,6 +96,55 @@ Output:
     "value": 30
   },
   "response": "Đã tạo luật: nếu nhiệt độ trên 30 độ thì bật quạt phòng khách."
+}
+
+Input: "sau 5 phút bật quạt phòng ngủ"
+Output:
+{
+  "intent": "schedule",
+  "action": "turn_on",
+  "device": "fan",
+  "room": "bedroom",
+  "face_auth": false,
+  "condition": null,
+  "response": "Đã hẹn giờ bật quạt phòng ngủ sau 5 phút.",
+  "unsupported": null,
+  "delay_seconds": 300
+}
+
+Input: "sau 5 phút nếu nhiệt độ trên 30 thì bật quạt phòng ngủ"
+Output:
+{
+  "intent": "create_rule",
+  "action": "turn_on",
+  "device": "fan",
+  "room": "bedroom",
+  "face_auth": false,
+  "condition": {
+    "sensor": "temperature",
+    "operator": ">",
+    "value": 30
+  },
+  "response": "Đã tạo luật: nếu nhiệt độ trên 30 độ thì bật quạt phòng ngủ.",
+  "unsupported": "hẹn giờ 5 phút"
+}
+
+Input: "sau 5 phút nếu nhiệt độ trên 30 thì bật quạt"
+Output:
+{
+  "intent": "clarify",
+  "action": "turn_on",
+  "device": "fan",
+  "room": null,
+  "face_auth": false,
+  "condition": {
+    "sensor": "temperature",
+    "operator": ">",
+    "value": 30
+  },
+  "response": "Bạn muốn bật quạt ở phòng nào?",
+  "unsupported": "hẹn giờ 5 phút",
+  "delay_seconds": 300
 }
 
 Input: "bật cái đó lên"

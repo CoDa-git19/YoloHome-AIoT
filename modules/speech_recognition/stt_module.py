@@ -178,13 +178,41 @@ class PhoWhisperSTT(STTStrategy):
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         logger.info(f"Đang tải model PhoWhisper: {self.model_name} (device={device}) ...")
-        self._asr_pipeline = pipeline(
+
+        pipeline_kwargs = dict(
             task="automatic-speech-recognition",
             model=self.model_name,
             device=0 if device == "cuda" else -1,
-            chunk_length_s=30,
-            stride_length_s=5,
         )
+
+        # THỬ pytorch_model.bin TRƯỚC, .safetensors chỉ là đường lùi.
+        #
+        # Thứ tự này là CÓ CHỦ ĐÍCH và không thể đảo lại.
+        #
+        # Đường .safetensors có thể GIẾT TIẾN TRÌNH ở tầng C++: chương trình
+        # thoát im lặng ngay sau khi tải model xong - không traceback, không
+        # exit code, không log. `except Exception` KHÔNG bắt được vì Python
+        # không bao giờ được trao lại quyền điều khiển.
+        # Kiểm chứng trên Windows/CPU với PhoWhisper-base, cache sạch:
+        #     pipeline(...)                            -> chết im lặng
+        #     from_pretrained(use_safetensors=False)   -> OK
+        #
+        # Ngược lại, thiếu pytorch_model.bin chỉ ném OSError bình thường - bắt
+        # được, xử lý được. Nên đặt đường an toàn trước thì mọi máy đều chạy:
+        #   - máy có .bin (PhoWhisper gốc)      -> dùng .bin, không rủi ro
+        #   - máy chỉ có .safetensors (một số   -> lần thử đầu ném OSError,
+        #     checkpoint fine-tune bản mới)        rơi xuống đường thứ hai
+        try:
+            self._asr_pipeline = pipeline(
+                **pipeline_kwargs,
+                model_kwargs={"use_safetensors": False},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Không nạp được pytorch_model.bin (%s), thử .safetensors.", exc
+            )
+            self._asr_pipeline = pipeline(**pipeline_kwargs)
+
         logger.info("Tải model thành công.")
         return self._asr_pipeline
 

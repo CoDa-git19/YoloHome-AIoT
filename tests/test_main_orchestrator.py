@@ -228,6 +228,14 @@ def orchestrator(tmp_path, monkeypatch):
     monkeypatch.setattr(init_db_module, "DB_PATH", test_db)
     monkeypatch.setattr(logging_service_module, "DB_PATH", test_db)
     monkeypatch.setattr(rule_service_module, "DB_PATH", test_db)
+    # 3. Face/STT module thật - __init__ gọi _build_face() nạp
+    #    models/face_model.pkl (~vài giây unpickle) và _build_stt() import
+    #    torch. Máy chưa cài dlib hoặc chưa có file model sẽ đi một đường
+    #    KHÁC HẲN, nên test trở nên phụ thuộc vào máy đang chạy.
+    #    Mọi test dưới đây tự gán face_module giả nên hai module thật này
+    #    không được dùng tới lần nào.
+    monkeypatch.setattr(MainOrchestrator, "_build_face", lambda self: None)
+    monkeypatch.setattr(MainOrchestrator, "_build_stt", lambda self: None)
 
     orch = MainOrchestrator()
     orch.latest_sensor_data = {"temperature": 25.0}
@@ -436,6 +444,70 @@ def test_no_camera_blocks_hardware(orchestrator):
 
     assert face.calls == 0, "Gọi nhận diện dù không có frame."
     assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa dù không có camera."
+    assert isinstance(response, str) and response
+
+
+def test_frame_capturer_is_used_when_no_camera(orchestrator):
+    """
+    Không có camera mở sẵn -> dùng scanner của face module (capture_frame).
+
+    Đây là đường chạy THẬT: capture_frame() tự mở/đóng webcam mỗi lần quét,
+    nên orchestrator không giữ VideoCapture khi rảnh.
+    """
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True, person_name="Danh")
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+    orchestrator.camera = None
+
+    calls = []
+    orchestrator.frame_capturer = lambda: (calls.append(1), "scanned-frame")[1]
+
+    orchestrator.process_text_command("mở cửa chính")
+
+    assert calls == [1], "Không hề gọi scanner của face module."
+    assert face.frames_seen == ["scanned-frame"]
+    assert cmd.execute_calls == 1
+
+
+def test_frame_capturer_timeout_blocks_hardware(orchestrator):
+    """
+    capture_frame() trả None khi hết timeout mà không thấy ai.
+
+    Phải coi đó là "không có khuôn mặt" và TỪ CHỐI - không được để lọt
+    frame=None xuống recognizer, vì mock sẽ vẫn trả danh tính hợp lệ.
+    """
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True)
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+    orchestrator.camera = None
+    orchestrator.frame_capturer = lambda: None
+
+    response = orchestrator.process_text_command("mở cửa chính")
+
+    assert face.calls == 0, "Gọi nhận diện dù scanner không lấy được frame."
+    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi hết timeout quét."
+    assert isinstance(response, str) and response
+
+
+def test_frame_capturer_crash_blocks_hardware(orchestrator):
+    """Webcam lỗi giữa chừng -> fail closed, không sập chương trình."""
+
+    def exploding_capturer():
+        raise RuntimeError("camera disconnected")
+
+    cmd = auth_required_service()
+    face = FakeFaceModule(authorized=True)
+    orchestrator.command_service = cmd
+    orchestrator.face_module = face
+    orchestrator.camera = None
+    orchestrator.frame_capturer = exploding_capturer
+
+    response = orchestrator.process_text_command("mở cửa chính")
+
+    assert face.calls == 0
+    assert cmd.execute_calls == 0, "NGHIÊM TRỌNG: mở cửa khi scanner lỗi."
     assert isinstance(response, str) and response
 
 
