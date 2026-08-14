@@ -4,9 +4,7 @@ Speech-to-Text module.
 OWNER: STT module.
 
 Vai trò trong pipeline: biến audio bytes thành transcript tiếng Việt để đưa
-vào LLM. Hợp đồng duy nhất: bytes -> str (tiếng Việt tự nhiên, CÓ dấu).
-
-Xem hợp đồng đầy đủ: docs/Integration-Contracts.md (Contract A).
+vào LLM. bytes -> str (tiếng Việt tự nhiên, CÓ dấu).
 """
 
 from __future__ import annotations
@@ -16,6 +14,7 @@ import os
 import subprocess
 from typing import Optional
 import numpy as np
+from pathlib import Path
  
 logger = logging.getLogger("yolohome.stt")
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +32,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Cấu hình
 # ---------------------------------------------------------------------------
-DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL", str(PROJECT_ROOT / "finetune_final"))
 TARGET_SAMPLE_RATE = 16_000  # PhoWhisper (Whisper backbone) yêu cầu 16kHz mono
 
 
