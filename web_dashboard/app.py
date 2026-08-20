@@ -768,6 +768,31 @@ def api_face_log_list():
     })
 
 
+# =============================================================================
+# API: Automation Rules (Observer + RuleService)
+#
+# Rule được TẠO bằng giọng nói/văn bản ("nếu nhiệt độ trên 30 thì bật quạt
+# phòng khách") và chạy ngầm qua RuleObserver. Không có phần này thì người dùng
+# tạo được rule mà không xem hay tắt được nó - vòng đời rule bị hở một nửa.
+# =============================================================================
+
+@app.route('/api/rules')
+def api_rules_list():
+    rules = orchestrator.rule_service.get_active_rules()
+
+    return jsonify({
+        "rows": rules,
+        "total": len(rules),
+        "hysteresis": settings.RULE_HYSTERESIS,
+    })
+
+
+@app.route('/api/rules/<int:rule_id>/deactivate', methods=['POST'])
+def api_rules_deactivate(rule_id: int):
+    orchestrator.rule_service.deactivate_rule(rule_id)
+    return jsonify({"ok": True, "rule_id": rule_id})
+
+
 if __name__ == '__main__':
     import os
 

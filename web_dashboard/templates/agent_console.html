@@ -6,7 +6,7 @@
     <div class="w-full lg:w-1/2 flex flex-col gap-4">
 
         <!-- 2.1 Top Metrics Bar -->
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
             <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
                 <i class="fas fa-thermometer-half text-blue-500 text-lg mb-1"></i>
                 <span id="tm-temp" class="text-sm font-bold text-slate-800 dark:text-white">-- °C</span>
@@ -47,7 +47,8 @@
         <!-- 2.2 Agent Pipeline Tracker -->
         <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
             <h3 class="font-semibold mb-4 text-slate-800 dark:text-white text-sm">Agent Pipeline</h3>
-            <div class="flex justify-between items-center text-[10px] font-medium text-slate-400" id="pipeline-tracker">
+            <div class="overflow-x-auto custom-scrollbar -mx-1 px-1">
+            <div class="flex justify-between items-center gap-2 text-[10px] font-medium text-slate-400 min-w-[480px]" id="pipeline-tracker">
                 <div class="flex flex-col items-center gap-1.5" data-step="stt">
                     <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">1</div>
                     <span class="text-slate-500 dark:text-slate-400">STT / Input</span>
@@ -77,6 +78,7 @@
                     <span class="text-slate-500 dark:text-slate-400">Execution</span>
                     <span class="step-label font-semibold text-slate-400">WAIT</span>
                 </div>
+            </div>
             </div>
         </div>
 
@@ -108,7 +110,7 @@
             </div>
 
             <!-- 3,4,5 Result Cards -->
-            <div class="grid grid-cols-3 gap-3 mt-1">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
                 <div class="border border-slate-200 dark:border-slate-800 rounded-lg p-3">
                     <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">3. Validation</p>
                     <p id="validation-status" class="text-sm font-bold text-slate-400">--</p>
@@ -143,7 +145,7 @@
                 </button>
             </div>
             <div class="overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse">
+                <table class="w-full text-left border-collapse min-w-[620px]">
                     <thead class="text-[10px] text-slate-400 uppercase">
                         <tr>
                             <th class="p-2 font-medium">Time</th>
@@ -170,7 +172,7 @@
                 </button>
             </div>
             <div class="overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse">
+                <table class="w-full text-left border-collapse min-w-[620px]">
                     <thead class="text-[10px] text-slate-400 uppercase">
                         <tr>
                             <th class="p-2 font-medium">Time</th>
@@ -185,6 +187,22 @@
                         <tr><td colspan="6" class="p-4 text-center text-slate-400">Loading...</td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Automation Rules: đóng vòng đời rule (tạo bằng giọng nói -> xem -> tắt) -->
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="font-semibold text-slate-800 dark:text-white text-sm">
+                    Automation Rules
+                    <span id="rules-count" class="ml-1 text-[10px] font-normal text-slate-400"></span>
+                </h3>
+                <button onclick="fetchRules()" class="text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sync-alt mr-1 text-blue-500"></i> Refresh
+                </button>
+            </div>
+            <div id="rules-body" class="flex flex-col gap-2 text-xs">
+                <p class="text-slate-400 text-center py-3">Loading...</p>
             </div>
         </div>
     </div>
@@ -286,6 +304,8 @@
 
         fetchMiniCommandLogs();
         fetchMiniFaceLogs();
+        // Lệnh vừa gửi có thể là create_rule -> làm mới luôn danh sách luật.
+        fetchRules();
     }
 
     function startProcessing(label) {
@@ -483,8 +503,65 @@
         }
     }
 
+    const SENSOR_LABEL = {
+        temperature: 'Nhiệt độ', humidity: 'Độ ẩm',
+        light: 'Ánh sáng', motion: 'Chuyển động',
+    };
+    const ACTION_LABEL = { turn_on: 'bật', turn_off: 'tắt', open: 'mở', close: 'đóng' };
+
+    async function fetchRules() {
+        const box = document.getElementById('rules-body');
+        try {
+            const res = await fetch('/api/rules');
+            const data = await res.json();
+
+            document.getElementById('rules-count').textContent =
+                data.total ? `(${data.total} đang bật)` : '';
+
+            if (!data.rows.length) {
+                box.innerHTML = `<p class="text-slate-400 text-center py-3">
+                    Chưa có luật nào. Thử nói: "nếu nhiệt độ trên 30 thì bật quạt phòng khách".
+                </p>`;
+                return;
+            }
+
+            box.innerHTML = data.rows.map(r => {
+                const sensor = SENSOR_LABEL[r.sensor] || r.sensor;
+                const action = ACTION_LABEL[r.action] || r.action;
+                // last_state=1: điều kiện ĐANG đúng, rule đã kích hoạt và chờ
+                // giá trị rơi khỏi ngưỡng (hysteresis) mới nạp lại.
+                const armed = r.last_state
+                    ? '<span class="text-amber-500" title="Điều kiện đang đúng, chờ nạp lại">● đã kích hoạt</span>'
+                    : '<span class="text-emerald-500" title="Sẵn sàng kích hoạt">● sẵn sàng</span>';
+                return `
+                <div class="flex justify-between items-center gap-2 border border-slate-100 dark:border-slate-800 rounded-lg px-3 py-2">
+                    <div class="min-w-0">
+                        <p class="text-slate-700 dark:text-slate-200 truncate">
+                            Nếu <b>${Dash.escapeHtml(sensor)} ${Dash.escapeHtml(r.operator)} ${r.value}</b>
+                            thì <b>${Dash.escapeHtml(action)} ${Dash.escapeHtml(r.device)}</b>
+                            (${Dash.escapeHtml(r.room)})
+                        </p>
+                        <p class="text-[10px] text-slate-400 mt-0.5">#${r.id} · ${armed}</p>
+                    </div>
+                    <button onclick="deactivateRule(${r.id})" title="Tắt luật này"
+                            class="shrink-0 text-rose-500 hover:bg-rose-500/10 w-7 h-7 rounded-lg transition">
+                        <i class="fas fa-trash-can text-[11px]"></i>
+                    </button>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            box.innerHTML = `<p class="text-rose-400 text-center py-3">Không tải được danh sách luật.</p>`;
+        }
+    }
+
+    async function deactivateRule(id) {
+        await fetch(`/api/rules/${id}/deactivate`, { method: 'POST' });
+        fetchRules();
+    }
+
     fetchMiniCommandLogs();
     fetchMiniFaceLogs();
+    fetchRules();
 </script>
 {% endblock %}
 
