@@ -200,12 +200,20 @@ python -m tools.check_setup
 Để xác minh toàn bộ cổng, chạy điểm vào chính:
 
 ```bash
-python system_core/main.py
+python -m system_core.main
 ```
+
+> **Vì sao dùng `-m` chứ không phải `python system_core/main.py`?** Cả hai điểm
+> vào đều import các package ở gốc dự án (`config`, `services`, `modules`,
+> `system_core`). Chạy file theo đường dẫn chỉ đặt thư mục chứa file đó lên
+> `sys.path`, nên import gãy với
+> `ModuleNotFoundError: No module named 'config'`. Dùng `-m` thì chạy từ gốc dự
+> án, và gốc dự án nằm trên `sys.path`. Chạy cả hai lệnh từ thư mục gốc repo.
+
 Để chạy Flask dashboard riêng lẻ:
 
 ```bash
-python web_dashboard/app.py
+python -m web_dashboard.app
 ```
 
 ### 2.7 Công cụ chẩn đoán LLM (tùy chọn, có tốn quota):
@@ -338,7 +346,7 @@ Server quyết định `face_auth` dựa trên config, bỏ qua giá trị LLM t
 ## 🆘 8. Khắc phục sự cố & Quy tắc chung
 - **Không bao giờ đẩy các mô hình AI (.pt, .h5, .bin) lên GitHub:** Tệp `.gitignore` sẽ chặn chúng. Chỉ nên tải về máy cục bộ và đặt chúng vào thư mục `models/`.
 
-- **Chạy main gateway trước khi PR:** Luôn kiểm tra mô-đun của bạn bằng cách chạy `python system_core/main.py` để đảm bảo nó không làm hỏng trạng thái ứng dụng toàn cục.
+- **Chạy main gateway trước khi PR:** Luôn kiểm tra mô-đun của bạn bằng cách chạy `python -m system_core.main` để đảm bảo nó không làm hỏng trạng thái ứng dụng toàn cục.
 
 - **Gemini trả 404 cho model trước đây vẫn chạy:** Google ngừng cấp model cho user mới. Chạy `python -m tools.probe_gemini` rồi cập nhật `GEMINI_MODEL`.
 

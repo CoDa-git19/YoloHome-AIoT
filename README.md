@@ -189,11 +189,19 @@ python -m tools.check_setup
 
 To verify the whole gateway, run the main entry point:
 ```bash
-python system_core/main.py
+python -m system_core.main
 ```
+
+> **Why `-m` and not `python system_core/main.py`?** Both entry points import
+> packages rooted at the project root (`config`, `services`, `modules`,
+> `system_core`). Running a file by path puts only that file's own folder on
+> `sys.path`, so the import fails with
+> `ModuleNotFoundError: No module named 'config'`. `-m` runs from the project
+> root, which is on `sys.path`. Run both from the repo root.
+
 To run the Flask dashboard separately:
 ```bash
-python web_dashboard/app.py
+python -m web_dashboard.app
 ```
 
 ### 2.7 LLM diagnostic tools (optional, uses API quota):
@@ -326,7 +334,7 @@ close out) are specified in
 ## 🆘 8. Troubleshooting & Rules of Thumb
 - **Never push AI models (.pt, .h5, .bin) to GitHub:** Our `.gitignore` blocks them. Download weights locally and put them in the `models/` folder.
 
-- **Run the main gateway before PR:** Always test your module by running `python system_core/main.py` to ensure it doesn't break the global application state.
+- **Run the main gateway before PR:** Always test your module by running `python -m system_core.main` to ensure it doesn't break the global application state.
 
 - **Gemini returns 404 for a model that used to work:** Google deprecates models for new users. Run `python -m tools.probe_gemini` and update `GEMINI_MODEL`.
 
