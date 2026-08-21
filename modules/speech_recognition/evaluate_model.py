@@ -1,5 +1,5 @@
 """
-evaluate_models.py
+evaluate_model.py
 -------------------
 Đánh giá chất lượng STT ĐÃ ĐÓNG GÓI qua STTStrategy (PhoWhisperSTT hoặc
 FasterWhisperSTT), dùng transcribe(bytes) -> str - phản ánh đúng hành vi
@@ -12,11 +12,12 @@ file này đánh giá STTStrategy đã đóng gói, dùng để verify module pr
 trước khi bàn giao.
 
 Chạy lệnh:
-    python evaluate_model.py --engine phowhisper
-    python modules/speech_recognition/evaluate_model.py --engine faster-whisper --ct2-path ./modules/speech_recognition/finetune_final_ct2
+    # LUÔN chạy từ thư mục gốc repo, bằng -m:
+    python -m modules.speech_recognition.evaluate_model --engine phowhisper
+    python -m modules.speech_recognition.evaluate_model --engine faster-whisper 
 
 Yêu cầu:
-    pip install jiwer pandas
+    jiwer, pandas (đã có trong requirements.txt)
 """
 
 from __future__ import annotations
@@ -28,9 +29,13 @@ from typing import List
 
 import pandas as pd
 
-from stt_module import STTStrategy, PhoWhisperSTT, DEFAULT_MODEL_NAME
-from stt_faster_whisper import FasterWhisperSTT, DEFAULT_CT2_MODEL_PATH
 from pathlib import Path
+from modules.speech_recognition.stt_module import (
+    STTStrategy, PhoWhisperSTT, DEFAULT_MODEL_NAME,
+)
+from modules.speech_recognition.stt_faster_whisper import (
+    FasterWhisperSTT, DEFAULT_CT2_MODEL_PATH,
+)
 
 _MODULE_DIR = Path(__file__).resolve().parent
 SAMPLES_DIR = _MODULE_DIR / "samples"
@@ -79,8 +84,13 @@ def build_stt(engine: str, model_name: str | None, ct2_path: str) -> STTStrategy
 
 def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame:
     rows = []
+    missing = []
 
     for sample in test_set:
+        if not Path(sample.audio_path).exists():
+            missing.append(sample.audio_path)
+            continue
+
         with open(sample.audio_path, "rb") as f:
             audio_bytes = f.read()
 
@@ -95,6 +105,16 @@ def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame
             "prediction": prediction,
             "latency_s": round(latency, 3),
         })
+
+    if missing:
+        print(f"\n[CẢNH BÁO] Bỏ qua {len(missing)} file không tồn tại:")
+        for path in missing:
+            print(f"  - {path}")
+        print("File .wav bị .gitignore chặn nên KHÔNG có trong repo. "
+              "Tự thu âm và đặt vào modules/speech_recognition/samples/.\n")
+        
+    if not rows:
+        raise SystemExit("Không có mẫu nào chạy được. Chuẩn bị file audio trước khi đánh giá.")
 
     return pd.DataFrame(rows)
 

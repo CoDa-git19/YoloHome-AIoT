@@ -28,11 +28,10 @@ lệnh convert trên với checkpoint mới để có bản CTranslate2 tương 
 from __future__ import annotations
 import io
 import logging
-from typing import Optional
 import numpy as np
 from pathlib import Path
 
-from stt_module import STTStrategy, normalize_audio_bytes, TARGET_SAMPLE_RATE
+from .stt_module import STTStrategy, normalize_audio_bytes
 
 logger = logging.getLogger("yolohome.stt.faster_whisper")
 logging.basicConfig(level=logging.INFO)
