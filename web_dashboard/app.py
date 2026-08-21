@@ -56,7 +56,7 @@ def get_db_connection() -> sqlite3.Connection:
 # thread worker của Flask chứ không phải main thread. GUI của OpenCV không an
 # toàn khi gọi ngoài main thread (trên Windows có thể treo hẳn request).
 # Người dùng đã có phản hồi trạng thái ngay trên dashboard nên cửa sổ đó thừa.
-FACE_SHOW_WINDOW = False
+FACE_SHOW_WINDOW = True
 
 
 # =============================================================================

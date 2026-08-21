@@ -143,17 +143,29 @@ class PhoWhisperSTT(STTStrategy):
                 logger.warning("Waveform rỗng (có thể là im lặng), trả về transcript rỗng.")
                 return ""
             waveform = self._normalize_amplitude(waveform)
+            # _normalize_amplitude trả mảng rỗng nếu phát hiện im lặng
+            if waveform.size == 0:
+                logger.warning("Audio quá nhỏ / im lặng (dưới ngưỡng %.3f), trả về transcript rỗng.",
+                               self.SILENCE_THRESHOLD)
+                return ""
             asr = self._get_pipeline()
 
             try:
                 result = asr(
                     waveform,
-                    generate_kwargs={"language": "vi", "task": "transcribe"},
+                    generate_kwargs={
+                        "language": "vi",
+                        "task": "transcribe",
+                        # Ngăn Whisper lặp n-gram — giảm mạnh hallucination
+                        # kiểu "thay đổi thay đổi thay đổi..." khi audio mờ.
+                        "no_repeat_ngram_size": 3,
+                    },
                 )
             except TypeError:
                 result = asr(waveform)
-            
+
             text = (result.get("text") or "").strip()
+            text = self._filter_hallucination(text)
             logger.info(f"Transcript: {text!r}")
             return text
     
@@ -227,10 +239,49 @@ class PhoWhisperSTT(STTStrategy):
         return waveform
 
     @staticmethod
+    def _filter_hallucination(text: str, max_repeat_ratio: float = 0.4) -> str:
+        """
+        Phát hiện transcript bị lặp (hallucination) và trả chuỗi rỗng.
+
+        Cơ chế: tách transcript thành các từ, đếm từ xuất hiện nhiều nhất.
+        Nếu tần suất từ đó chiếm hơn `max_repeat_ratio` tổng số từ thì
+        gần như chắc chắn model đang ảo giác - trả "" thay vì chuỗi vô nghĩa.
+
+        Ví dụ:
+            "thay đổi thay đổi thay đổi..." -> từ 'thay' chiếm ~50% -> ""
+            "bật đèn phòng khách"          -> không từ nào chiếm >40%  -> giữ nguyên
+        """
+        if not text:
+            return text
+        words = text.split()
+        if len(words) < 4:          # câu quá ngắn, không áp dụng lọc
+            return text
+        from collections import Counter
+        most_common_count = Counter(words).most_common(1)[0][1]
+        if most_common_count / len(words) > max_repeat_ratio:
+            logger.warning(
+                "Phát hiện hallucination (từ lặp chiếm %.0f%%), trả chuỗi rỗng. "
+                "Transcript gốc: %r",
+                most_common_count / len(words) * 100,
+                text[:80],
+            )
+            return ""
+        return text
+
+    # Nếu âm lượng đỉnh dưới ngưỡng này thì coi là im lặng / tiếng ồn nền.
+    # Giá trị 0.01 tương đương ~-40 dBFS — đủ để lọc phòng im mà không cắt
+    # giọng nhỏ. Tăng lên 0.02–0.03 nếu môi trường nhiều tạp âm.
+    SILENCE_THRESHOLD = 0.01
+
+    @staticmethod
     def _normalize_amplitude(waveform: np.ndarray) -> np.ndarray:
+        """Chuẩn hoá biên độ; trả mảng rỗng nếu audio quá nhỏ (im lặng)."""
         max_val = np.abs(waveform).max()
-        if max_val > 0:
-            waveform = waveform / max_val * 0.95
+        if max_val < PhoWhisperSTT.SILENCE_THRESHOLD:
+            # Âm lượng dưới ngưỡng → khả năng cao là im lặng hoặc tạp âm.
+            # Trả mảng kích thước 0 để transcribe() bắt và trả chuỗi rỗng.
+            return np.array([], dtype=np.float32)
+        waveform = waveform / max_val * 0.95
         return waveform
 
 
