@@ -189,12 +189,17 @@ python -m tools.check_setup
 
 To verify the whole gateway, run the main entry point:
 ```bash
-python system_core/main.py
+python -m system_core.main
 ```
 To run the Flask dashboard separately:
 ```bash
-python web_dashboard/app.py
+python -m web_dashboard.app
 ```
+
+> Always use `python -m <package>.<module>` from the repository root.
+> Running a file by path (`python web_dashboard/app.py`) puts that file's own
+> folder on `sys.path` instead of the repo root, so `from config import settings`
+> fails with `ModuleNotFoundError`.
 
 ### 2.7 LLM diagnostic tools (optional, uses API quota):
 ```bash
