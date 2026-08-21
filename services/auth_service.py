@@ -139,12 +139,23 @@ class AuthService:
                 command_id, command, status="no_face", message=MSG_NO_FRAME
             )
 
+        # Chụp TRƯỚC khi nhận diện, để cả trường hợp recognize() ném lỗi vẫn
+        # còn bằng chứng ảnh. Đây là chỗ duy nhất có frame, nên cũng là chỗ
+        # duy nhất lưu được.
+        snapshot = None
+        try:
+            from modules.face_recognition.face_module import save_snapshot
+            snapshot = save_snapshot(frame)
+        except Exception as exc:
+            self._log_error("face", f"save_snapshot failed: {exc}")
+
         try:
             face_result = self.face_recognizer.recognize(frame) or {}
         except Exception as exc:
             self._log_error("face", f"recognize failed: {exc}")
             return self._deny(
-                command_id, command, status="no_face", message=MSG_ERROR
+                command_id, command, status="no_face", message=MSG_ERROR,
+                snapshot_path=snapshot,
             )
 
         person_name = self._clean_name(face_result.get("person_name"))
@@ -162,6 +173,7 @@ class AuthService:
                 message=MSG_DENIED,
                 person_name=person_name,
                 confidence=confidence,
+                snapshot_path=snapshot,
             )
 
         # ĐÃ XÁC THỰC. Đây là chỗ DUY NHẤT trong toàn hệ thống được phép gọi
@@ -181,6 +193,7 @@ class AuthService:
             executed=executed,
             person_name=person_name,
             confidence=confidence,
+            snapshot_path=snapshot,
         )
 
         if not executed:
@@ -256,6 +269,7 @@ class AuthService:
         message: str,
         person_name: str | None = None,
         confidence: float = 0.0,
+        snapshot_path: str | None = None,
     ) -> dict[str, Any]:
         self._close_log(
             command_id,
@@ -264,6 +278,7 @@ class AuthService:
             executed=False,
             person_name=person_name,
             confidence=confidence,
+            snapshot_path=snapshot_path,
         )
 
         return {
@@ -284,6 +299,7 @@ class AuthService:
         executed: bool,
         person_name: str | None,
         confidence: float,
+        snapshot_path: str | None = None,
     ) -> None:
         """
         Đóng command_log và ghi face_log (Contract B - Step 3).
@@ -331,6 +347,7 @@ class AuthService:
                 device=command.get("device"),
                 room=command.get("room"),
                 action_result=execution_status,
+                snapshot_path=snapshot_path,
             )
         except Exception as exc:
             self._log_error("gateway", f"log_face failed: {exc}")
