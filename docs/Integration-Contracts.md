@@ -35,6 +35,20 @@ transcript = stt.transcribe(audio_bytes)
 result = command_service.handle_transcript(transcript, sensor_data, session_id)
 ```
 
+Two implementations satisfy this contract, selected by `STT_ENGINE` in `.env`:
+
+| `STT_ENGINE` | Class | Backend | File |
+|---|---|---|---|
+| `phowhisper` (default) | `PhoWhisperSTT` | transformers / PyTorch | `stt_module.py` |
+| `faster-whisper` | `FasterWhisperSTT` | CTranslate2 | `stt_faster_whisper.py` |
+
+Both load lazily, both preserve punctuation and diacritics as required below, and
+both return `""` rather than raising on failure. Swapping engines must not change
+observable behaviour beyond accuracy and latency — that is the point of the
+Strategy boundary, and it held up in practice: adding the second engine required
+one branch in `_build_stt()` and one line in `.env`, with no change to
+`CommandService`, `AuthService`, or the dashboard.
+
 ### Requirements on the returned string
 
 **Vietnamese with diacritics — this is a hard requirement, not a preference.**
@@ -65,10 +79,26 @@ Bot    : Bạn muốn tắt thiết bị nào ở phòng ngủ? Hiện có: qu�
 `action` and `room` survived, only `device` was lost, and the bot re-asked for
 exactly the missing slot.
 
+That tolerance has a limit, and the limit is the **first syllable**. A dropped
+leading consonant does not degrade the command, it removes the verb entirely:
+
+```
+Spoken : tắt quạt đi
+STT    : quạt đi                      <- 1 of 3 words lost
+Result : device with no action; the LLM has nothing to route
+```
+
+Observed with `faster-whisper` at `compute_type="int8"` — see *Current
+implementation* below. When choosing between engines, weight errors on the verb
+far more heavily than the raw WER suggests.
+
 Remaining requirements:
 
 - **Do not pre-lowercase or strip punctuation.** `llm_module` lowercases
   internally on the mock path; doing it upstream is harmless but pointless.
+  Note this cuts the other way when *measuring* quality: `evaluate_model.py`
+  normalises punctuation before comparing, because a trailing period is the
+  grader's problem, not the model's.
 - **Empty/whitespace must be safe, not a crash.** An empty transcript makes
   `parse_and_validate` return `ok=False, next_step="stop"`.
 
@@ -80,12 +110,38 @@ to the orchestrator.
 `modules/speech_recognition/stt_module.py`:
 
 - `PhoWhisperSTT` — HuggingFace model, loaded **lazily** on the first
-  `transcribe()` call (~10 s on CPU); subsequent calls take ~1.5 s for 4 s of audio.
+  `transcribe()` call. That first call absorbs ~10 s of model loading on CPU;
+  subsequent calls average **1.29 s** for 4 s of audio.
 - `MockSTTStrategy` — returns a canned transcript, used when `USE_MOCK_STT=true`.
 
-**System dependency: `ffmpeg` must be on PATH.** Without it, `transcribe()`
-returns an empty string **silently** — it looks like the model heard nothing. See
+`modules/speech_recognition/stt_faster_whisper.py`:
+
+- `FasterWhisperSTT` — the same checkpoint converted to CTranslate2, averaging
+  **0.77 s** on the same audio. Requires a separate conversion step; the command
+  is in that file's header.
+
+Measured 2026-08-22, Windows/CPU, n=3. faster-whisper is ~1.7× faster but dropped
+the leading syllable on two of three samples (WER 0.194 vs 0.000), which is why
+`phowhisper` remains the default. Full numbers, method notes and caveats:
+`docs/STT-Evaluation.md`.
+
+**System dependency: `ffmpeg` must be on PATH.** Both engines call
+`normalize_audio_bytes()`, so without ffmpeg `transcribe()` returns an empty
+string **silently** — it looks like the model heard nothing. See
 `docs/Setup-Windows.md` §8.
+
+**Model weights are not in the repository.** `.gitignore` excludes
+`*.safetensors` and `*.bin`, so `finetune_final/` and `finetune_final_ct2/`
+contain only JSON config after a fresh clone. Weights come from HuggingFace; see
+`.env.example`. Without them the system falls back to the base
+`vinai/PhoWhisper-base` and keeps working — which is exactly the danger, since
+the fine-tuning is silently absent. `check_config()` warns at startup and
+`/api/status` reports the model actually loaded.
+
+**Converting to CTranslate2 requires `--copy_files tokenizer.json`.** Without it
+faster-whisper silently downloads `openai/whisper-tiny`'s tokenizer instead —
+wrong vocabulary, degraded transcripts, and a single `httpx` log line buried in
+the INFO stream as the only sign.
 
 ---
 
@@ -146,6 +202,13 @@ anti-spoofing is silently disabled with nothing else to signal it.
 `capture_frame()` returns `None` on camera failure, timeout, or no blink
 detected. **`None` must be treated as `no_face` and denied** — fail closed.
 
+> **The preview window is a console-only affordance.** `capture_frame()` calls
+> `cv2.imshow()` when `show_window=True`, which is safe from `system_core/main.py`
+> because the scan runs on the main thread. It is **not** safe from a Flask
+> worker thread: on Windows the window either fails to appear or hangs the
+> request. The dashboard therefore passes `show_window=False` and shows the saved
+> snapshot after the fact instead — see Step 4.
+
 ### Step 3 — authenticate
 
 `services/auth_service.py` is implemented:
@@ -197,6 +260,14 @@ The duplication is not redundant: the Face module could be swapped for another
 implementation that forgets this rule, and the last layer before hardware runs
 should not rely on the goodwill of the layer above it.
 
+**`denied` has two distinct causes, and conflating them is expensive.** Either
+the model classified a stranger (`person_name=None`, confidence possibly *high*),
+or it recognised a known person below the threshold. Reporting only "confidence
+below threshold" sends people to lower `FACE_AUTH_THRESHOLD` on a door lock to
+fix something that was never a threshold problem — a real incident, observed at
+87% confidence against an 80% threshold. Anything consuming `face_log.status`
+should read `person_name` before explaining *why* a scan was denied.
+
 ### Step 4 — execute and close the log
 
 `AuthService` handles both; callers do not touch them:
@@ -204,7 +275,10 @@ should not rely on the goodwill of the layer above it.
 ```python
 executed = command_service.execute_authorized_command(command)   # -> bool
 update_command_result(command_id, result=..., execution_status=...)
-log_face(person_name=..., confidence=..., status=..., command_id=...)
+log_face(
+    person_name=..., confidence=..., status=..., command_id=...,
+    snapshot_path=...,      # filename of the captured frame, or None
+)
 ```
 
 Valid `face_log.status` values: `authorized`, `denied`, `no_face`, `timeout`.
@@ -215,6 +289,32 @@ which is exactly what you need most when investigating an incident.
 
 `confidence` is preserved even when `person_name=None`, so the audit trail can
 record *"recognised with 0.93 confidence that this is a stranger"*.
+
+#### Snapshot evidence
+
+`AuthService` saves the captured frame to disk and records the **filename** — not
+an absolute path — in `face_log.snapshot_path`. Files live under
+`data/snapshots/`; the dashboard serves them at `/snapshots/<filename>`.
+
+Storing a bare filename is deliberate. The database gets copied between machines;
+`D:\253\DADN\YoloHome-AIoT\...` is not portable, a filename is.
+
+The capture happens **before** `recognize()` runs, so a crash inside the
+recogniser still leaves photographic evidence of who was at the door.
+
+Saving is **fail-soft**, for the same reason as logging (see below): any error
+goes to `error_log` and the authorisation decision proceeds unchanged. A full
+disk must not open the door, and must not close it either. `NULL` therefore means
+one of two things — the row predates the feature, or saving failed. Check
+`error_log` with `module='face'` to tell them apart.
+
+Combined with the `person_name` rule above, a denied stranger produces a complete
+audit row: identity `unknown`, the confidence at which they were judged a
+stranger, and their photograph.
+
+> **These are biometric images of real people.** `data/snapshots/` is gitignored
+> and must stay that way. Git retains committed files permanently, even after
+> deletion. Verify with `git status --short data/` before committing.
 
 ### Two things you MUST know
 
@@ -232,7 +332,21 @@ The function is called in exactly **two places** system-wide:
 **2. Logging failures must not change the security decision.** If the database is
 locked or the disk is full, the door must still open for someone who
 authenticated correctly, and must still stay shut for a stranger. Every logging
-call inside `AuthService` is wrapped in `try/except`.
+call inside `AuthService` is wrapped in `try/except`, and the same rule extends
+to snapshot saving.
+
+### A note for callers outside the console
+
+`AuthService` closes the `command_log` row it was handed. A caller that
+implements its own auth flow instead of delegating will leave that row stuck at
+`waiting_auth` forever, with `latency_ms` empty — and dashboard statistics will
+count it as a failure.
+
+`web_dashboard/app.py` therefore delegates to
+`orchestrator.handle_auth_required()` rather than reimplementing the flow. Any
+future shell — a mobile client, a REST API — must do the same. Note the method
+is public: an earlier version of the dashboard called the underscored internal
+version, which is exactly the coupling this contract exists to prevent.
 
 ---
 
@@ -385,3 +499,7 @@ reason printed. Both catch `(Exception, SystemExit)` — `face_recognition` call
 `quit()` when its model package is missing, and `SystemExit` does not inherit
 from `Exception`, so a plain `except Exception` lets it through and the entire
 gateway exits mid-boot.
+
+`_build_stt()` also branches on `STT_ENGINE`, importing the CTranslate2 engine
+lazily and inside the same `(Exception, SystemExit)` guard — `ctranslate2` and
+`av` are C++ extensions and can fail at import in the same unrecoverable way.

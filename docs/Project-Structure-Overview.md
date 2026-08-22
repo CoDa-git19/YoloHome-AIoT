@@ -657,7 +657,7 @@ docs/
 | `Design-Principles.md` | The eight principles governing how the system is written |
 | `Module-Responsibilities.md` | Who owns which file, and the boundaries not to cross |
 | `Face-Recognition.md` | Model training and runtime inference |
-| `Setup-Windows.md` | Ten traps encountered while setting up on Windows |
+| `Setup-Windows.md` | Fourteen traps encountered while setting up on Windows |
 | `STT-Evaluation.md` | WER/CER/latency: PhoWhisper vs faster-whisper |
 | `Web_dashboard.md` | Flask dashboard: routes, API endpoints, UI |
 

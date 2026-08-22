@@ -1,144 +1,233 @@
 # Module Responsibilities
 
-Ai sở hữu file nào, module nào được làm gì, và — quan trọng hơn — **không** được
-làm gì.
+Who owns which file, what each module is allowed to do, and — more importantly —
+what it must **not** do.
 
-Tài liệu này bổ sung cho `Integration-Contracts.md`. Ở đó là *hình dạng dữ liệu*
-đi qua hai seam tích hợp; ở đây là *ranh giới trách nhiệm*.
+This document complements `Integration-Contracts.md`. That one describes the
+*shape of the data* crossing each integration seam; this one describes the
+*boundaries of responsibility*.
 
 ---
 
-## Bảng sở hữu
+## Ownership table
 
-| File | Owner | Trách nhiệm | KHÔNG được làm |
+| File | Owner | Responsible for | Must NOT |
 |---|---|---|---|
-| `modules/llm_integration/llm_module.py` | Uyên | transcript → JSON lệnh đã validate | ra quyết định an ninh |
-| `modules/llm_integration/validator.py` | Uyên | enforce policy phía server | tin `face_auth` do LLM trả |
-| `modules/speech_recognition/stt_module.py` | Ly | `bytes` → transcript tiếng Việt có dấu | gọi LLM, lowercase, strip dấu câu |
-| `modules/face_recognition/face_module.py` | Bình | frame → `person_name` + `confidence` | quyết định authorized, **tự mở camera** |
-| `services/auth_service.py` | Uyên | so ngưỡng, thực thi, đóng log | dựng lại `command` |
-| `modules/hardware_gateway/hardware_module.py` | Khang | thực thi lệnh, đọc cảm biến | đổi tên 4 khoá cảm biến |
-| `services/command_service.py` | Uyên | pipeline transcript → thực thi | kiểm tra lại `face_auth` |
-| `services/rule_service.py` | Uyên | lưu và đánh giá automation rule | chạy rule cần face auth |
-| `system_core/main.py` | Danh | lắp ráp, vòng cảm biến, sở hữu camera | dựng lại pipeline bằng tay |
-| `database/*`, dashboard | Danh | lưu trữ, hiển thị | — |
+| `modules/llm_integration/llm_module.py` | Uyên | transcript → validated JSON command | make security decisions |
+| `modules/llm_integration/validator.py` | Uyên | enforce policy server-side | trust the `face_auth` the LLM returned |
+| `modules/speech_recognition/stt_module.py` | Ly | `bytes` → Vietnamese transcript with diacritics | call the LLM, lowercase, strip punctuation |
+| `modules/speech_recognition/stt_faster_whisper.py` | Ly | same contract, CTranslate2 backend | diverge in behaviour from `stt_module` |
+| `modules/speech_recognition/evaluate_model.py` | Ly | measure WER / CER / latency | change runtime behaviour |
+| `modules/face_recognition/face_module.py` | Bình | frame → `person_name` + `confidence`; save snapshots | decide `authorized`, **open the camera itself** |
+| `services/auth_service.py` | Uyên | compare against threshold, execute, close logs | rebuild the `command` |
+| `modules/hardware_gateway/hardware_module.py` | Khang | execute commands, read sensors | rename the four sensor keys |
+| `services/command_service.py` | Uyên | pipeline from transcript to execution | re-check `face_auth` |
+| `services/rule_service.py` | Uyên | store and evaluate automation rules | run rules that require face auth |
+| `system_core/main.py` | Danh | wiring, sensor loop, camera ownership | rebuild the pipeline by hand |
+| `database/*` | Khang | persistence | — |
+| `web_dashboard/*` | Danh | presentation, delegating back to the orchestrator | rebuild the pipeline, **call private methods** |
 
 ---
 
-## Ranh giới quan trọng nhất
+## The boundaries that matter most
 
-### `execute_authorized_command()` chỉ được gọi ở hai chỗ
+### `execute_authorized_command()` may be called from exactly two places
 
-Hàm này **không phải cổng bảo mật**. Nó chạy phần cứng rồi trả `bool`, không
-kiểm tra `face_auth`. Gọi nó ngoài hai chỗ dưới đây là mở cửa cho người lạ:
+This function is **not a security gate**. It drives the hardware and returns a
+`bool`; it does not check `face_auth`. Calling it anywhere other than the two
+places below opens the door to a stranger:
 
-1. `AuthService.authorize_and_execute()` — sau khi `authorized=True`
-2. `RuleObserver.update()` — chỉ cho lệnh **không** cần face auth; có chốt chặn
-   riêng vì rule chạy tự động, không có ai đứng trước camera để xác thực
+1. `AuthService.authorize_and_execute()` — only after `authorized=True`
+2. `RuleObserver.update()` — only for commands that do **not** require face auth,
+   with its own guard, because rules fire automatically and nobody is standing at
+   the camera to authenticate
 
-### Face module không sở hữu camera
+### The face module does not own the camera
 
-`MainOrchestrator` mở `cv2.VideoCapture` một lần lúc boot và truyền xuống qua
-tham số `cap`. Face module **đọc** frame từ đối tượng đó.
+Contract B assigns frame acquisition to the System owner, not the Face owner.
+`MainOrchestrator.capture_frame()` is the single entry point, and it draws from
+two sources in order:
 
-Ngoại lệ duy nhất: `capture_frame(cap=None)` tự mở tự đóng — chỉ dùng cho công cụ
-kiểm tra thủ công `tests/modules/face/test_face.py`.
+1. **`self.camera`** — a pre-opened `VideoCapture`. Grabs exactly one frame and
+   returns; it does not wait for anyone to appear. Intended for tests and
+   headless contexts. Default `None`.
+2. **`self.frame_capturer`** — the face module's scanner, wired up in
+   `_build_face()`. Opens the camera itself, waits until it sees a face (plus a
+   blink if `FACE_REQUIRE_BLINK` is on), returns a clean frame, then releases the
+   camera.
 
-> **Sửa đổi Contract B.** Bản gốc ghi "orchestrator đưa **một** frame". Điều đó
-> không tương thích với liveness detection: chớp mắt không phát hiện được bằng
-> một khung hình. Contract hiện tại: **orchestrator sở hữu `VideoCapture`, face
-> module đọc nhiều frame từ nó.** Quyền sở hữu không đổi; chỉ số lượng frame đổi.
+Both `None` → `None` → rejection. Fail closed.
 
-### Bốn khoá cảm biến là hợp đồng
+> **Path 2 is the production path.** `capture_frame(cap=None)` opening and
+> closing the device per scan is deliberate: it means the webcam is not held open
+> while the system is idle, so other applications can use it and Windows will not
+> hand back a stale handle.
+
+> **`self.camera` is a trap when liveness is required.** That path grabs a single
+> frame, and a blink cannot be detected in one frame. Setting `self.camera` while
+> `FACE_REQUIRE_BLINK=true` silently disables anti-spoofing — Face Auth still
+> runs, still recognises, and a printed photo passes. Nothing else reports this,
+> so `capture_frame()` writes an ERROR to `error_log` when it happens. The
+> attribute is named `camera`, which makes it the obvious place to put a
+> `VideoCapture`; that is exactly why the trap is easy to fall into.
+
+> **Amendment to Contract B.** The original text said the orchestrator supplies
+> **one** frame. That is incompatible with liveness detection: a blink cannot be
+> detected in a single frame. The current contract: **the orchestrator owns frame
+> acquisition; the face module reads as many frames as it needs.** Ownership is
+> unchanged; only the frame count is.
+
+### The dashboard may only call the orchestrator's public API
+
+`web_dashboard/app.py` used to call `orchestrator._handle_auth_required()`. A
+leading underscore means "internal, may change at any time" — binding the
+dashboard to it invites exactly the kind of drift that `app.py`'s own docstring
+recounts.
+
+The orchestrator now exposes `handle_auth_required()`. The dashboard calls that.
+If the dashboard needs more from the orchestrator, **add a public method**; do
+not reach into the underscored surface.
+
+The wider rule: the dashboard is a *shell*. It does not build pipelines, does not
+make security decisions, and does not open cameras. All of that belongs to
+`system_core/main.py`.
+
+### The four sensor keys are a contract
 
 ```python
 {"temperature": ..., "humidity": ..., "light": ..., "motion": ...}
 ```
 
-`RuleService` khớp `condition["sensor"]` với đúng bốn tên này. Đổi tên khi nối
-phần cứng thật sẽ làm **mọi** automation rule ngừng kích hoạt — không lỗi, không
-log, không test đỏ.
+`RuleService` matches `condition["sensor"]` against exactly these four names.
+Renaming them when wiring real hardware will stop **every** automation rule from
+firing — with no error, no log, and no red test.
 
-### `execute_command()` phải trả `state` khi `get_status`
+### `execute_command()` must return `state` for `get_status`
 
 ```python
 {"status": "success", "state": "on" | "off" | "open" | "closed"}
 ```
 
-Thiếu `state` thì hệ thống không sập — người dùng chỉ nhận "không xác định được
-trạng thái". `contracts.check_status_result()` log ERROR để chuyện đó không âm
-thầm.
+A missing `state` does not crash anything — the user simply gets "could not
+determine the state". `contracts.check_status_result()` logs an ERROR so that it
+does not pass silently.
+
+### Face Auth snapshots are evidence, not a feature
+
+`AuthService` captures a frame **before** calling `recognize()`, so a crash inside
+the recogniser still leaves photographic evidence of who was at the door. The
+filename — not an absolute path, because the database gets copied between
+machines — goes into `face_log.snapshot_path`.
+
+Saving is **fail-soft**: any error goes to `error_log` and the authorisation
+decision proceeds unchanged. A full disk must not open the door, and must not
+close it either.
+
+Every scan is recorded, including rejections. That is precisely the row you want
+when investigating an incident.
+
+Images live under `data/snapshots/`, which is gitignored. **These are biometric
+images of real people and must never be committed** — Git retains them
+permanently, even after deletion.
 
 ---
 
-## Quy tắc import
+## Import rules
 
-**Trong module có phụ thuộc nặng** (`cv2`, `dlib`, `torch`, `transformers`):
+**Inside modules with heavy dependencies** (`cv2`, `dlib`, `torch`,
+`transformers`, `faster_whisper`):
 
 ```python
-# Ở đầu file: chỉ stdlib và config
+# At the top of the file: stdlib and config only
 import math, pickle
 from config.settings import MODELS_DIR
 
 class SvmFaceRecognizer:
     def recognize(self, frame):
-        import cv2                 # ← nặng, nằm trong hàm
+        import cv2                 # ← heavy, inside the function
         import face_recognition
 ```
 
-Lý do và ngoại lệ: xem `Design-Principles.md` §5.
+Rationale and exceptions: `Design-Principles.md` §5.
 
-**Trong công cụ kiểm tra thủ công đặt trong `tests/`** (tên bắt đầu bằng `test_`
-nên pytest sẽ import): mọi phụ thuộc nặng phải nằm trong `main()`, kèm
-`__test__ = False`.
+**Inside manual tools placed in `tests/`** (their names start with `test_`, so
+pytest will import them): every heavy dependency must sit inside `main()`, and the
+file must set `__test__ = False`.
+
+**Across package boundaries**: always import through the package, never by bare
+module name.
+
+```python
+from .stt_module import STTStrategy                      # correct
+from modules.speech_recognition.stt_module import ...    # correct
+from stt_module import STTStrategy                       # WRONG
+```
+
+The last form bypasses the package, so `stt_module`'s
+`from system_core.strategies import STTStrategy` fails and falls into its
+`except ImportError` branch, which defines an ABC with the **same name but a
+different identity**. The tool runs fine; `isinstance(stt, STTStrategy)` returns
+`False` in the real system. The failure only surfaces at integration time. See
+`tests/modules/stt/test_stt.py` for the full account.
 
 ---
 
-## Test: hai loại, đừng lẫn
+## Tests: two kinds, do not mix them
 
-| | Test tự động | Công cụ thủ công |
+| | Automated tests | Manual tools |
 |---|---|---|
-| Ví dụ | `test_face_module_contract.py`, `test_auth_service.py` | `test_face.py`, `test_stt.py` |
-| Cần gì | không gì cả | webcam, micro, model, người ngồi trước máy |
-| Có `assert` | có | không |
-| pytest chạy | có | không (`__test__ = False`) |
-| Mục đích | khoá hành vi lại | canh chỉnh tham số theo phòng thật |
+| Examples | `test_face_module_contract.py`, `test_auth_service.py` | `test_face.py`, `test_stt.py` |
+| Requires | nothing | webcam, microphone, model, a person at the machine |
+| Has `assert` | yes | no |
+| pytest runs it | yes | no (`__test__ = False`) |
+| Purpose | lock behaviour in place | tune parameters against a real room |
 
-Công cụ thủ công vẫn nằm trong `tests/` cho tiện tìm, nhưng phải import nhẹ để
-không làm đỏ cả suite.
-
----
-
-## Cờ bật/tắt module
-
-`ENABLE_FACE_AUTH` và `ENABLE_STT` mặc định `false`.
-
-**Tắt không có nghĩa là bỏ qua xác thực.** Hệ thống vẫn fail closed: thiếu face
-module thì `door.open` bị từ chối. Cờ quyết định có **nạp** module hay không,
-không phải có **kiểm tra** hay không.
-
-Wiring **fail soft**: thiếu thư viện, thiếu model, thiếu webcam thì gateway vẫn
-boot, chỉ tính năng đó tắt và có dòng `[Config] ... = OFF (lý do)`. Máy chưa cài
-được dlib không được phép làm sập hệ thống của cả nhóm.
-
-`_wire_face_auth()` dựng `face_module`, `camera`, `liveness_capture` và
-`auth_service` trong **cùng một** `try/except` — để bất biến *`auth_service` tồn
-tại ⟺ `face_module` tồn tại* được đảm bảo bằng cấu trúc code, không bằng kỷ luật.
-
-Vì `AuthService` cần `command_service`, hai lời gọi `_wire_*()` **phải** đứng sau
-khối `--- SERVICES ---` trong `MainOrchestrator.__init__`.
+Manual tools still live under `tests/` so they are easy to find, but they must
+import lightly so they do not turn the whole suite red.
 
 ---
 
-## Design pattern: dùng ở đâu, giải quyết vấn đề gì
+## Module toggles
 
-| Pattern | Nơi dùng | Vấn đề nó giải |
+Wiring is **fail soft**: a missing library, a missing model, or a missing webcam
+still lets the gateway boot. Only that feature switches off, and a
+`[Config] ... = OFF (reason)` line explains why. A teammate who cannot get dlib
+installed must not be able to break the whole team's system.
+
+`_build_face()` constructs `face_module`, the recogniser, and `frame_capturer`
+inside a **single** `try/except`, so the invariant *`auth_service` exists ⟺
+`face_module` exists* is guaranteed by the structure of the code rather than by
+discipline.
+
+Because `AuthService` needs `command_service`, the face wiring **must** come after
+the `--- SERVICES ---` block in `MainOrchestrator.__init__`.
+
+> **Turning a module off does not mean skipping authentication.** The system still
+> fails closed: with no face module, `door.open` is refused. The flags decide
+> whether a module is **loaded**, not whether a check is **performed**.
+
+> **`ENABLE_FACE_AUTH` and `ENABLE_STT` are dead configuration.** They appear in
+> `.env.example` but no code reads them — verified 2026-08-22 across
+> `config/settings.py`, `system_core/main.py`, and `web_dashboard/app.py`.
+> Use `USE_MOCK_FACE` and `USE_MOCK_STT` instead. Configuration that looks
+> effective but is not costs hours of debugging; remove these two lines from
+> `.env.example`.
+
+---
+
+## Design patterns: where they are used, and what they solve
+
+| Pattern | Used in | Problem it solves |
 |---|---|---|
-| Strategy | `LLMStrategy`, `STTStrategy` | đổi Gemini ↔ OpenAI ↔ mock mà không sửa `CommandService` |
-| Observer | `Subject` / `Observer` trong `observers.py` | một vòng đọc cảm biến nuôi nhiều nơi tiêu thụ (rule, log, cloud) mà chúng không biết nhau |
-| Command | `commands.py` | đóng gói lệnh thành đối tượng có `execute()` / `undo()`, lưu được lịch sử |
+| Strategy | `LLMStrategy`, `STTStrategy` | swap Gemini ↔ OpenAI ↔ mock, and PhoWhisper ↔ faster-whisper, without touching `CommandService` |
+| Observer | `Subject` / `Observer` in `observers.py` | one sensor-reading loop feeding several consumers (rules, logging, cloud) that know nothing about each other |
+| Command | `commands.py` | wrap a command as an object with `execute()` / `undo()`, so history can be kept |
 
-Pattern không phải để trang trí báo cáo. Kiểm chứng: bỏ pattern đi thì cái gì
-gãy? Bỏ Strategy → `CommandService` phụ thuộc cứng vào Gemini, test phải gọi API
-thật. Bỏ Observer → thêm một nơi tiêu thụ dữ liệu cảm biến phải sửa
-`HardwareModule`. Bỏ Command → không undo được.
+Patterns are not decoration for the report. The test is: remove the pattern — what
+breaks? Remove Strategy → `CommandService` hard-depends on Gemini and tests must
+call the real API. Remove Observer → adding one more consumer of sensor data means
+editing `HardwareModule`. Remove Command → undo becomes impossible.
+
+`STTStrategy` earned its keep in practice: adding `FasterWhisperSTT` required no
+change to `CommandService`, `AuthService`, or the dashboard — only one branch in
+`_build_stt()` and one line in `.env`.
