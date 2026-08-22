@@ -645,7 +645,7 @@ docs/
 ├── Module-Responsibilities.md
 ├── Face-Recognition.md
 ├── Setup-Windows.md
-├── STT-Evaluation.md
+├── STT_Evaluation.md
 └── Web_dashboard.md
 ```
 
