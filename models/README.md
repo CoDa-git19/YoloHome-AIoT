@@ -12,7 +12,7 @@ có gì báo rằng bạn đang thiếu file.
 |---|---|
 | `face_model.pkl` | SVM đã train, kèm LabelEncoder |
 
-Tải tại: <dán link Google Drive>
+Tải tại: https://drive.google.com/drive/folders/1x1XhBWTxF0KHK5n6sOTO_CTqfcDZ2btS?usp=sharing
 
 Kiểm tra sau khi đặt file vào:
 
