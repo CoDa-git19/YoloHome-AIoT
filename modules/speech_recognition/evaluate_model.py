@@ -86,6 +86,24 @@ def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame
     rows = []
     missing = []
 
+    # Lượt warm-up: model được nạp LAZY ở lần transcribe() đầu tiên, nên mẫu
+    # số 1 gánh luôn thời gian tải model (~9s với transformers, ~5s với CT2)
+    # trong khi các mẫu sau chỉ mất ~1.5s và ~0.9s. Tính lượt đó vào trung
+    # bình làm latency báo cáo cao gấp 3 lần thực tế - đo tốc độ khởi động
+    # chứ không phải tốc độ nhận dạng.
+    #
+    # Không dùng test_set[0] trực tiếp: mẫu đầu tiên có thể là file thiếu
+    # (xem khối `missing` bên dưới), khi đó warm-up sẽ không chạy và bug lại
+    # quay về im lặng.
+    warmup = next((s for s in test_set if Path(s.audio_path).exists()), None)
+    if warmup is not None:
+        try:
+            with open(warmup.audio_path, "rb") as f:
+                stt.transcribe(f.read())
+            print("[warm-up] Model đã nạp xong, bắt đầu đo.")
+        except Exception as exc:
+            print(f"[warm-up] Bỏ qua ({exc}). Mẫu đầu tiên sẽ gánh thời gian nạp model.")
+
     for sample in test_set:
         if not Path(sample.audio_path).exists():
             missing.append(sample.audio_path)
@@ -127,7 +145,14 @@ def compute_metrics(df: pd.DataFrame) -> pd.DataFrame:
     import jiwer
 
     def normalize_for_compare(text: str) -> str:
-        return text.strip().lower()
+        # Bỏ dấu câu trước khi so sánh. STT cố ý GIỮ dấu câu (Contract A), nhưng
+        # người tiêu thụ transcript là LLM - nó không quan tâm dấu chấm cuối câu.
+        # Không chuẩn hoá thì "tắt quạt đi." bị tính WER 0.333 so với "tắt quạt đi",
+        # tức đo lỗi chính tả của người chấm chứ không phải lỗi của model.
+        import re
+        text = text.strip().lower()
+        text = re.sub(r"[.,!?;:]", "", text)
+        return re.sub(r"\s+", " ", text).strip()
 
     metrics_per_row = []
     for _, row in df.iterrows():
