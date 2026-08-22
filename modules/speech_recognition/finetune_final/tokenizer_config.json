@@ -2,7 +2,7 @@
   "add_prefix_space": false,
   "backend": "tokenizers",
   "bos_token": "<|endoftext|>",
-  "clean_up_tokenization_spaces": true,
+  "clean_up_tokenization_spaces": false,
   "eos_token": "<|endoftext|>",
   "errors": "replace",
   "extra_special_tokens": [

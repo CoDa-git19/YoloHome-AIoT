@@ -232,6 +232,23 @@ class MainOrchestrator:
             print("[STT] MOCK mode - canned transcript, no model download.")
             return MockSTTStrategy()
 
+        if settings.STT_ENGINE == "faster-whisper":
+            # Import lazy và bắt cả SystemExit vì cùng lý do như PhoWhisper:
+            # ctranslate2/av là extension C++, có thể thoát tiến trình lúc import
+            # khi thiếu runtime. Fail soft -> stt_engine=None -> dashboard báo
+            # "chưa cấu hình nhận dạng giọng nói", thay vì gateway chết lúc boot.
+            try:
+                from modules.speech_recognition.stt_faster_whisper import (
+                    FasterWhisperSTT,
+                )
+            except (Exception, SystemExit) as exc:
+                print(f"[STT] Cannot import faster-whisper: {exc}")
+                log_error("stt", f"faster-whisper import failed: {exc}")
+                return None
+
+            print(f"[STT] REAL mode - faster-whisper (CT2) {settings.CT2_MODEL_PATH}")
+            return FasterWhisperSTT(model_path=settings.CT2_MODEL_PATH)
+
         print(f"[STT] REAL mode - {settings.PHOWHISPER_MODEL}")
         # Model tải lazy ở lần transcribe() đầu tiên, không phải ở đây.
         return PhoWhisperSTT(model_name=settings.PHOWHISPER_MODEL)
@@ -459,6 +476,15 @@ class MainOrchestrator:
             log_error("gateway", f"capture_frame failed: {exc}")
             return None
 
+    def handle_auth_required(self, result: dict[str, Any]) -> str:
+        """
+        API CÔNG KHAI cho cổng Face Auth (Contract B).
+
+        Dashboard và mọi lớp vỏ khác gọi hàm này thay vì method có gạch dưới.
+        Orchestrator sở hữu camera, nên đây là chỗ duy nhất được phép mở nó.
+        """
+        return self._handle_auth_required(result)
+    
     def _handle_auth_required(self, result: dict[str, Any]) -> str:
         """
         Cổng xác thực cho các hành động nhạy cảm (hiện tại: door.open).

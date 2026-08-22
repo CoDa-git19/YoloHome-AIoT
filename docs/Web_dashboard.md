@@ -4,6 +4,25 @@ Tài liệu này liệt kê chi tiết các thành phần (components) và phân
 
 ---
 
+## 0. Cách chạy
+
+```bash
+# Từ THƯ MỤC GỐC repo, không phải từ web_dashboard/
+python -m database.init_db      # khởi tạo DB (idempotent, chạy lại vô hại)
+python -m web_dashboard.app     # http://localhost:5000
+```
+
+### Giới hạn: nút microphone chỉ hoạt động trên localhost
+
+`getUserMedia` là secure-context API — trình duyệt chỉ cho phép trên `https://`
+hoặc `http://localhost`. Mở dashboard từ máy khác qua `http://<ip-lan>:5000` thì
+nút mic **không báo lỗi, chỉ đơn giản không làm gì**.
+
+Cách xử lý khi demo trên nhiều máy:
+- Dùng ô nhập text (`/api/command`) — pipeline sau bước STT hoàn toàn giống nhau.
+- Hoặc SSH port-forward: `ssh -L 5000:localhost:5000 user@gateway`
+- Hoặc dựng HTTPS bằng chứng chỉ tự ký (nhiều việc, chỉ làm nếu bắt buộc).
+
 ## 1. Các thành phần chung toàn cục (Global Components)
 Đây là các thành phần xuất hiện cố định trên tất cả các trang của Dashboard.
 
@@ -112,4 +131,3 @@ Khi click vào một sự kiện quét mặt, hiển thị:
 *   **User Profile Card:** Ảnh khuôn mặt chụp được (kích thước lớn), Recognized User, Confidence, Status, Triggered By, Device/Room, Action Result, Note.
 *   **Auth Event (JSON):** Khung code nền đen chứa dữ liệu JSON thô của sự kiện.
 *   **Security Insights:** Thống kê an ninh tóm tắt phía dưới.
-```eof

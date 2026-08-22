@@ -405,12 +405,60 @@ def capture_frame(
 
     return best_frame
 
+def save_snapshot(frame, prefix: str = "auth") -> str | None:
+    """
+    Lưu frame đã chụp ra đĩa, trả về TÊN FILE (không phải đường dẫn tuyệt đối).
 
+    Trả tên file để face_log.snapshot_path không dính đường dẫn máy cụ thể -
+    DB được sao chép giữa các máy, còn "D:\\253\\DADN\\..." thì không.
+
+    KHÔNG BAO GIỜ raise. Lưu ảnh là việc phụ trợ; nếu đĩa đầy hoặc không có
+    quyền ghi thì cửa vẫn phải mở cho người đúng và đóng với người lạ.
+    """
+    if frame is None:
+        return None
+
+    try:
+        import cv2
+        from datetime import datetime
+
+        from config.settings import SNAPSHOTS_DIR
+
+        SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Mốc thời gian tới mili giây: hai lần quét cách nhau dưới 1 giây là
+        # chuyện bình thường khi người dùng thử lại ngay.
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        filename = f"{prefix}_{stamp}.jpg"
+
+        ok = cv2.imwrite(str(SNAPSHOTS_DIR / filename), frame)
+        if not ok:
+            # imwrite trả False chứ KHÔNG ném lỗi. Ném ở đây để dùng chung
+            # một đường ghi log với khối except bên dưới.
+            # Nguyên nhân hay gặp nhất: đường dẫn dự án có ký tự ngoài cp1252
+            # (xem docs/Setup-Windows.md §0) - cv2 mở file qua ANSI API.
+            raise RuntimeError(
+                f"cv2.imwrite returned False for {filename}; "
+                "check the project path is pure ASCII"
+            )
+        return filename 
+    except Exception as exc:
+        # Nuốt lỗi để không làm sập luồng xác thực, NHƯNG phải để lại dấu vết.
+        # `except: return None` trần khiến "chưa quét lần nào" và "lưu ảnh
+        # thất bại" không phân biệt được: cả hai đều là thư mục rỗng.
+        try:
+            from services.logging_service import log_error
+            log_error("face", f"save_snapshot failed: {exc}")
+        except Exception:
+            pass
+        return None
+    
 __all__ = [
     "FaceRecognizer",
     "MockFaceRecognizer",
     "SvmFaceRecognizer",
     "capture_frame",
+    "save_snapshot",
     "eye_aspect_ratio",
     "EAR_THRESHOLD",
 ]

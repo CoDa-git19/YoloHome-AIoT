@@ -200,13 +200,17 @@ python -m tools.check_setup
 Để xác minh toàn bộ cổng, chạy điểm vào chính:
 
 ```bash
-python system_core/main.py
+python -m system_core.main
 ```
 Để chạy Flask dashboard riêng lẻ:
 
 ```bash
-python web_dashboard/app.py
+python -m web_dashboard.app
 ```
+> Luôn chạy bằng `python -m <package>.<module>` từ thư mục gốc repo.
+> Chạy theo đường dẫn file (`python web_dashboard/app.py`) sẽ đặt chính thư mục
+> chứa file đó vào `sys.path` thay vì repo root, nên `from config import settings`
+> báo `ModuleNotFoundError`.
 
 ### 2.7 Công cụ chẩn đoán LLM (tùy chọn, có tốn quota):
 

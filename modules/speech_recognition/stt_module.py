@@ -32,9 +32,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Cấu hình
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent
+_MODULE_DIR = Path(__file__).resolve().parent
 
-DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL", str(PROJECT_ROOT / "finetune_final"))
+DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL", str(_MODULE_DIR / "finetune_final"))
 TARGET_SAMPLE_RATE = 16_000  # PhoWhisper (Whisper backbone) yêu cầu 16kHz mono
 
 
@@ -197,6 +197,11 @@ class PhoWhisperSTT(STTStrategy):
         #     pipeline(...)                            -> chết im lặng
         #     from_pretrained(use_safetensors=False)   -> OK
         #
+        # CẬP NHẬT 2026-08-22: checkpoint finetune_final (lưu bằng transformers 5.x)
+        # chỉ có model.safetensors, nên nhánh .bin LUÔN thất bại và mọi lần chạy đều
+        # rơi xuống đường thứ hai. Đã test lại trên Windows / Python 3.14 / CPU:
+        # KHÔNG còn chết im lặng, nạp 245 tensor và transcribe bình thường.
+        #
         # Ngược lại, thiếu pytorch_model.bin chỉ ném OSError bình thường - bắt
         # được, xử lý được. Nên đặt đường an toàn trước thì mọi máy đều chạy:
         #   - máy có .bin (PhoWhisper gốc)      -> dùng .bin, không rủi ro
@@ -209,7 +214,10 @@ class PhoWhisperSTT(STTStrategy):
             )
         except Exception as exc:
             logger.warning(
-                "Không nạp được pytorch_model.bin (%s), thử .safetensors.", exc
+                "Không nạp được pytorch_model.bin (%s: %s), thử .safetensors. "
+                "Bình thường với checkpoint lưu bằng transformers 5.x.",
+                type(exc).__name__,
+                str(exc).splitlines()[0][:200],
             )
             self._asr_pipeline = pipeline(**pipeline_kwargs)
 

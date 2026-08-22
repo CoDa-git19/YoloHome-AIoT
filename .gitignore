@@ -48,6 +48,7 @@ logs/
 # =========================
 models/*
 !models/.gitkeep
+!models/README.md
 
 *.pkl
 *.joblib
@@ -76,7 +77,8 @@ data/sample/*
 # Optional dataset folders
 data/audio/
 data/face_dataset/
-data/snapshots/
+!data/snapshots/
+data/snapshots/*
 
 # =========================
 # Test / coverage cache

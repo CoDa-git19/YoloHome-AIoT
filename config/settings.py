@@ -25,6 +25,10 @@ DATABASE_DIR = ROOT_DIR / "database"
 DATA_DIR = ROOT_DIR / "data"
 MODELS_DIR = ROOT_DIR / "models"
 
+# Ảnh chụp lúc xác thực khuôn mặt. Tách khỏi models/ vì đây là dữ liệu sinh ra
+# lúc chạy, không phải tài sản của repo.
+SNAPSHOTS_DIR = ROOT_DIR / "data" / "snapshots"
+
 DEVICE_REGISTRY_PATH = CONFIG_DIR / "device_registry.json"
 COMMAND_SCHEMA_PATH = CONFIG_DIR / "command_schema.json"
 LANGUAGE_ALIASES_PATH = CONFIG_DIR / "language_aliases.json"
@@ -50,7 +54,21 @@ class ConfigError(ValueError):
 
 
 def env_str(name: str, default: str = "") -> str:
-    return os.getenv(name, default).strip()
+    # Biến RỖNG cũng phải rơi về default, không chỉ biến không tồn tại.
+    #
+    # os.getenv(name, default) chỉ trả default khi biến VẮNG MẶT. Một dòng
+    # "CT2_MODEL_PATH=" trong .env khiến biến TỒN TẠI với giá trị "", và ""
+    # đi tiếp vào Path("") sẽ trỏ về thư mục hiện tại - .exists() trả True,
+    # nên mọi kiểm tra "đường dẫn model có tồn tại không" đều im lặng cho qua
+    # rồi vỡ lúc load model.
+    #
+    # Cùng quy ước với env_bool() bên dưới, vốn đã xử lý đúng từ đầu.
+    raw = os.getenv(name)
+
+    if raw is None or not raw.strip():
+        return default
+
+    return raw.strip()
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -197,6 +215,19 @@ LLM_RETRY_BACKOFF_SECONDS = env_float("LLM_RETRY_BACKOFF_SECONDS", 0.5, minimum=
 # false -> dùng Gemini nếu có GEMINI_API_KEY
 USE_MOCK_LLM = env_bool("USE_MOCK_LLM", False)
 
+# Engine STT khi KHÔNG ở chế độ mock:
+#   "phowhisper"     - transformers/PyTorch, chạy thẳng checkpoint HF
+#   "faster-whisper" - CTranslate2, nhanh hơn 4-8 lần trên CPU, nhưng model
+#                      PHẢI convert trước bằng ct2-transformers-converter
+STT_ENGINE = env_choice(
+    "STT_ENGINE", "phowhisper", {"phowhisper", "faster-whisper"}
+)
+
+# Thư mục model đã convert sang CTranslate2. Chỉ dùng khi STT_ENGINE=faster-whisper.
+CT2_MODEL_PATH = env_str(
+    "CT2_MODEL_PATH",
+    str(ROOT_DIR / "modules" / "speech_recognition" / "finetune_final_ct2"),
+)
 
 # =============================================================================
 # Hội thoại nhiều lượt (multi-turn)
@@ -294,7 +325,17 @@ USE_MOCK_STT = env_bool("USE_MOCK_STT", False)
 # Tên model trên HuggingFace, hoặc đường dẫn tới checkpoint đã fine-tune.
 # CÙNG tên biến môi trường mà stt_module đã đọc - khai báo tên khác sẽ tạo hai
 # nguồn sự thật cho một sự việc.
-PHOWHISPER_MODEL = env_str("PHOWHISPER_MODEL", "vinai/PhoWhisper-base")
+#
+# Mặc định ưu tiên checkpoint fine-tune nếu nó CÓ THẬT trên đĩa. Ghim cứng
+# "vinai/PhoWhisper-base" ở đây từng khiến dashboard âm thầm chạy model gốc
+# trong khi cả nhóm tưởng đang demo bản fine-tune - không có gì báo, chỉ là
+# transcript kém hơn kết quả đo được.
+FINETUNE_STT_DIR = ROOT_DIR / "modules" / "speech_recognition" / "finetune_final"
+
+PHOWHISPER_MODEL = env_str(
+    "PHOWHISPER_MODEL",
+    str(FINETUNE_STT_DIR) if FINETUNE_STT_DIR.exists() else "vinai/PhoWhisper-base",
+)
 
 # Số giây ghi âm mỗi lượt ở chế độ giọng nói.
 VOICE_RECORD_SECONDS = env_float("VOICE_RECORD_SECONDS", 4.0, minimum=1.0)
@@ -358,6 +399,47 @@ def check_config() -> list[str]:
             f"FACE_AUTH_THRESHOLD={FACE_AUTH_THRESHOLD} là quá thấp cho một "
             "khoá cửa. Giá trị khuyến nghị: 0.80."
         )
+
+    # -------------------------------------------------------------------------
+    # Speech-to-Text
+    # -------------------------------------------------------------------------
+
+    if not USE_MOCK_STT and PHOWHISPER_MODEL == "vinai/PhoWhisper-base":
+        warnings.append(
+            "PHOWHISPER_MODEL đang là model GỐC 'vinai/PhoWhisper-base', không phải checkpoint fine-tune. " \
+            "Số liệu WER/CER đo được sẽ KHÔNG khớp với chất lượng demo. " \
+            "Xem modules/speech_recognition/finetune_final/."
+        )
+
+    if not USE_MOCK_STT and STT_ENGINE == "faster-whisper":
+        # CT2_MODEL_PATH có thể là ĐƯỜNG DẪN ĐĨA hoặc REPO ID HuggingFace -
+        # faster-whisper nhận cả hai. Chỉ kiểm chứng được cái thứ nhất; repo id
+        # phải đợi lúc tải mới biết.
+        #
+        # KHÔNG đoán bằng hình dạng chuỗi. Bản trước suy ra repo id từ việc có
+        # "/" mà không có "\" - đúng trên Windows, sai hoàn toàn trên Linux/macOS,
+        # nơi "modules/speech_recognition/finetune_final_ct2" khớp cả hai điều
+        # kiện. Cảnh báo im lặng đúng ở nền tảng cần nó nhất.
+        #
+        # Dấu hiệu chắc chắn: đường dẫn thì TỒN TẠI trên đĩa, repo id thì không.
+        # Chỉ khi cả hai đều không đúng mới có gì để cảnh báo.
+        _ct2_on_disk = Path(CT2_MODEL_PATH).expanduser().exists()
+        _plausible_repo_id = (
+            CT2_MODEL_PATH.count("/") == 1
+            and "\\" not in CT2_MODEL_PATH
+            and not CT2_MODEL_PATH.startswith((".", "/", "~"))
+        )
+
+        if not _ct2_on_disk and not _plausible_repo_id:
+             warnings.append(
+                f"STT_ENGINE=faster-whisper nhưng không thấy {CT2_MODEL_PATH}. "
+                "Không phải thư mục trên đĩa, cũng không giống repo id HuggingFace "
+                "(dạng 'user/name'). "
+                "Model phải convert trước: ct2-transformers-converter --model "
+                "<checkpoint> --output_dir <ct2_dir> --quantization int8"
+                "<checkpoint> --output_dir <ct2_dir> --quantization int8 "
+                "--copy_files tokenizer.json"
+            )
 
     # -------------------------------------------------------------------------
     # Phần cứng

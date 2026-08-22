@@ -29,7 +29,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import (Flask, jsonify, redirect, render_template, request, send_from_directory, url_for)
 
 from config import settings
 from database.init_db import init_db
@@ -94,7 +94,7 @@ def _install_headless_frame_capturer() -> None:
     if orchestrator.face_module is None:
         return
 
-    if settings.USE_MOCK_FACE:
+    if orchestrator.use_mock_face:
         orchestrator.frame_capturer = lambda: "mock-frame"
         return
 
@@ -145,6 +145,23 @@ def command_log_page():
 def face_auth_log_page():
     return render_template('face_auth_log.html', active_page='face_auth')
 
+@app.route('/snapshots/<path:filename>')
+def serve_snapshot(filename: str):
+    """
+    Phục vụ ảnh chụp lúc xác thực khuôn mặt.
+
+    DÙNG send_from_directory, KHÔNG ghép chuỗi đường dẫn.
+
+    Thư mục này chứa ảnh khuôn mặt người thật, và tên file đến TỪ DATABASE
+    rồi đi thẳng vào URL. Ghép chuỗi thủ công sẽ mở đường cho path traversal:
+    một hàng face_log có snapshot_path = "../../config/.env" là đủ để lộ
+    GEMINI_API_KEY và ADAFRUIT_IO_KEY. send_from_directory chuẩn hoá đường dẫn
+    và từ chối mọi thứ nằm ngoài thư mục gốc.
+
+    Ảnh chưa từng được ghi (mất file, đĩa đầy) -> 404, và template hiển thị
+    dấu gạch ngang. Không cần xử lý riêng ở đây.
+    """
+    return send_from_directory(settings.SNAPSHOTS_DIR, filename)
 
 # =============================================================================
 # API: Trạng thái thiết bị / cảm biến / kết nối (sidebar + top metrics)
@@ -178,7 +195,12 @@ def _module_status() -> dict[str, Any]:
         "stt": {
             "ready": stt_ready,
             "mode": stt_mode,
-            "model": settings.PHOWHISPER_MODEL if stt_mode == "real" else None,
+            "engine": settings.STT_ENGINE if stt_mode == "real" else None,
+            "model": (
+                settings.CT2_MODEL_PATH
+                if settings.STT_ENGINE == "faster-whisper"
+                else settings.PHOWHISPER_MODEL
+            ) if stt_mode == "real" else None,
         },
         "face": {
             "ready": face_ready,
@@ -290,7 +312,7 @@ def _build_pipeline_payload(
     # không cho biết bị từ chối vì người lạ, vì thiếu model, hay vì hết giờ.
     face_reasons = {
         "authorized": "Đã xác thực thành công.",
-        "denied": "Độ tin cậy dưới ngưỡng cho phép - từ chối.",
+        "denied": "Từ chối: không phải người nhà, hoặc độ tin cậy dưới ngưỡng cho phép.",
         "no_face": "Không lấy được khuôn mặt (camera, model, hoặc hết thời gian chờ).",
         "timeout": "Hết thời gian chờ xác thực.",
     }
@@ -399,7 +421,7 @@ def _run_pipeline(
             # cả hai nhánh - AuthService thật, hoặc fail-closed khi face module
             # chưa sẵn sàng - đồng thời ĐÓNG command_log/face_log. Dựng lại
             # đoạn này ở đây sẽ tái tạo đúng kiểu trôi lệch mà file này vừa mắc.
-            response = orchestrator._handle_auth_required(result)
+            response = orchestrator.handle_auth_required(result)
             result['response'] = response or result.get('response')
 
     command_id = int(result.get('command_id') or -1)
@@ -553,8 +575,29 @@ def api_command_log_summary():
             f"""
             SELECT
                 COUNT(*) AS total,
-                SUM(CASE WHEN execution_status = 'success' THEN 1 ELSE 0 END) AS success,
+
+                -- execution_status có nhiều hơn 2 trạng thái, và gộp tất cả
+                -- những gì != 'success' vào "thất bại" sẽ dìm KPI xuống thấp
+                -- hơn thực tế: 'clarify' là đang hỏi lại người dùng,
+                -- 'scheduled' là đã hẹn giờ thành công, 'registry_request' là
+                -- thiết bị chưa đăng ký (lỗi cấu hình, không phải lỗi pipeline).
+                --
+                -- 'failed' cố ý định nghĩa bằng PHỦ ĐỊNH hai nhóm kia, để nếu
+                -- sau này có thêm trạng thái mới thì nó rơi vào mẫu số chứ
+                -- không biến mất im lặng. Bất biến: success + failed + pending
+                -- LUÔN bằng total.
+                SUM(CASE WHEN execution_status IN ('success','scheduled')
+                         THEN 1 ELSE 0 END) AS success,
+                SUM(CASE WHEN COALESCE(execution_status,'') NOT IN
+                              ('success','scheduled','clarify','registry_request','waiting_auth')
+                         THEN 1 ELSE 0 END) AS failed,
+                SUM(CASE WHEN COALESCE(execution_status,'') IN ('clarify','registry_request','waiting_auth')
+                         THEN 1 ELSE 0 END) AS pending,
+
+                -- Tách riêng khỏi 'failed' (là tập con) vì dashboard có ô KPI
+                -- riêng cho số lệnh bị Face Auth từ chối.
                 SUM(CASE WHEN execution_status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+
                 SUM(CASE WHEN face_auth = 1 THEN 1 ELSE 0 END) AS requires_auth,
                 AVG(latency_ms) AS avg_latency
             FROM command_log
@@ -567,24 +610,35 @@ def api_command_log_summary():
 
     total = row['total'] or 0
     success = row['success'] or 0
+    failed = row['failed'] or 0
+    pending = row['pending'] or 0
     rejected = row['rejected'] or 0
     requires_auth = row['requires_auth'] or 0
 
-    def pct(count: int) -> float:
-        return round(count / total * 100, 1) if total else 0.0
+    # Mẫu số của tỉ lệ thành công là các lệnh ĐÃ NGÃ NGŨ, không phải tất cả.
+    # Một lệnh đang chờ người dùng trả lời chưa thành công cũng chưa thất bại;
+    # đưa nó vào mẫu số nghĩa là mỗi lần hệ thống hỏi lại - tức làm ĐÚNG - lại
+    # tự trừ điểm chính mình.
+    decided = success + failed
+
+    def pct(count: int, base: int) -> float:
+        return round(count / base * 100, 1) if base else 0.0
 
     return jsonify({
         "total": total,
         "success": success,
-        "success_rate": pct(success),
+        "success_rate": pct(success, decided),
+        "failed": failed,
+        "pending": pending,
         "rejected": rejected,
-        "rejected_rate": pct(rejected),
+        "rejected_rate": pct(rejected, decided),
         "requires_auth": requires_auth,
-        "requires_auth_rate": pct(requires_auth),
+        # Giữ mẫu số là total: đây là "bao nhiêu phần lệnh cần xác thực",
+        # một câu hỏi về TOÀN BỘ lưu lượng, không phải về kết quả.
+        "requires_auth_rate": pct(requires_auth, total),
         "avg_latency_ms": round(row['avg_latency'], 0) if row['avg_latency'] is not None else None,
         "device_options": _command_device_options(),
     })
-
 
 @app.route('/api/command-log')
 def api_command_log_list():

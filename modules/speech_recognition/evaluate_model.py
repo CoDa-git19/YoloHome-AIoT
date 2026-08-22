@@ -1,5 +1,5 @@
 """
-evaluate_models.py
+evaluate_model.py
 -------------------
 Đánh giá chất lượng STT ĐÃ ĐÓNG GÓI qua STTStrategy (PhoWhisperSTT hoặc
 FasterWhisperSTT), dùng transcribe(bytes) -> str - phản ánh đúng hành vi
@@ -12,11 +12,12 @@ file này đánh giá STTStrategy đã đóng gói, dùng để verify module pr
 trước khi bàn giao.
 
 Chạy lệnh:
-    python evaluate_model.py --engine phowhisper
-    python modules/speech_recognition/evaluate_model.py --engine faster-whisper --ct2-path ./modules/speech_recognition/finetune_final_ct2
+    # LUÔN chạy từ thư mục gốc repo, bằng -m:
+    python -m modules.speech_recognition.evaluate_model --engine phowhisper
+    python -m modules.speech_recognition.evaluate_model --engine faster-whisper 
 
 Yêu cầu:
-    pip install jiwer pandas
+    jiwer, pandas (đã có trong requirements.txt)
 """
 
 from __future__ import annotations
@@ -28,9 +29,13 @@ from typing import List
 
 import pandas as pd
 
-from stt_module import STTStrategy, PhoWhisperSTT, DEFAULT_MODEL_NAME
-from stt_faster_whisper import FasterWhisperSTT, DEFAULT_CT2_MODEL_PATH
 from pathlib import Path
+from modules.speech_recognition.stt_module import (
+    STTStrategy, PhoWhisperSTT, DEFAULT_MODEL_NAME,
+)
+from modules.speech_recognition.stt_faster_whisper import (
+    FasterWhisperSTT, DEFAULT_CT2_MODEL_PATH,
+)
 
 _MODULE_DIR = Path(__file__).resolve().parent
 SAMPLES_DIR = _MODULE_DIR / "samples"
@@ -79,8 +84,31 @@ def build_stt(engine: str, model_name: str | None, ct2_path: str) -> STTStrategy
 
 def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame:
     rows = []
+    missing = []
+
+    # Lượt warm-up: model được nạp LAZY ở lần transcribe() đầu tiên, nên mẫu
+    # số 1 gánh luôn thời gian tải model (~9s với transformers, ~5s với CT2)
+    # trong khi các mẫu sau chỉ mất ~1.5s và ~0.9s. Tính lượt đó vào trung
+    # bình làm latency báo cáo cao gấp 3 lần thực tế - đo tốc độ khởi động
+    # chứ không phải tốc độ nhận dạng.
+    #
+    # Không dùng test_set[0] trực tiếp: mẫu đầu tiên có thể là file thiếu
+    # (xem khối `missing` bên dưới), khi đó warm-up sẽ không chạy và bug lại
+    # quay về im lặng.
+    warmup = next((s for s in test_set if Path(s.audio_path).exists()), None)
+    if warmup is not None:
+        try:
+            with open(warmup.audio_path, "rb") as f:
+                stt.transcribe(f.read())
+            print("[warm-up] Model đã nạp xong, bắt đầu đo.")
+        except Exception as exc:
+            print(f"[warm-up] Bỏ qua ({exc}). Mẫu đầu tiên sẽ gánh thời gian nạp model.")
 
     for sample in test_set:
+        if not Path(sample.audio_path).exists():
+            missing.append(sample.audio_path)
+            continue
+
         with open(sample.audio_path, "rb") as f:
             audio_bytes = f.read()
 
@@ -96,6 +124,16 @@ def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame
             "latency_s": round(latency, 3),
         })
 
+    if missing:
+        print(f"\n[CẢNH BÁO] Bỏ qua {len(missing)} file không tồn tại:")
+        for path in missing:
+            print(f"  - {path}")
+        print("File .wav bị .gitignore chặn nên KHÔNG có trong repo. "
+              "Tự thu âm và đặt vào modules/speech_recognition/samples/.\n")
+        
+    if not rows:
+        raise SystemExit("Không có mẫu nào chạy được. Chuẩn bị file audio trước khi đánh giá.")
+
     return pd.DataFrame(rows)
 
 
@@ -107,7 +145,14 @@ def compute_metrics(df: pd.DataFrame) -> pd.DataFrame:
     import jiwer
 
     def normalize_for_compare(text: str) -> str:
-        return text.strip().lower()
+        # Bỏ dấu câu trước khi so sánh. STT cố ý GIỮ dấu câu (Contract A), nhưng
+        # người tiêu thụ transcript là LLM - nó không quan tâm dấu chấm cuối câu.
+        # Không chuẩn hoá thì "tắt quạt đi." bị tính WER 0.333 so với "tắt quạt đi",
+        # tức đo lỗi chính tả của người chấm chứ không phải lỗi của model.
+        import re
+        text = text.strip().lower()
+        text = re.sub(r"[.,!?;:]", "", text)
+        return re.sub(r"\s+", " ", text).strip()
 
     metrics_per_row = []
     for _, row in df.iterrows():

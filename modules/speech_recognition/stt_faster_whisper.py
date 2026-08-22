@@ -4,9 +4,13 @@ Speech-to-Text module — faster-whisper (CTranslate2) implementation.
 OWNER: STT module.
 
 Cài đặt STTStrategy thay thế cho PhoWhisperSTT (stt_module.py), dùng
-faster-whisper (CTranslate2 backend) thay vì transformers/PyTorch. Nhanh
-hơn đáng kể trên CPU (khoảng 4-8 lần trong thực tế), phù hợp khi triển khai
-trên máy không có GPU. Cùng hợp đồng: bytes -> str (tiếng Việt tự nhiên, CÓ dấu).
+faster-whisper (CTranslate2 backend) thay vì transformers/PyTorch. 
+Cùng hợp đồng: bytes -> str (tiếng Việt tự nhiên, CÓ dấu).
+
+ĐO ĐƯỢC trên checkpoint này (2026-08-22, Windows/CPU, n=3): nhanh hơn ~1.7 lần
+(0.77s vs 1.29s) NHƯNG nuốt mất âm tiết đầu ở 2/3 mẫu - WER 0.194 so với 0.0 của PhoWhisper. 
+Vì vậy PhoWhisper vẫn là engine mặc định.
+Chi tiết: docs/STT-Evaluation.md
 
 Xem hợp đồng đầy đủ: docs/Integration-Contracts.md (Contract A).
 
@@ -18,7 +22,12 @@ BƯỚC BẮT BUỘC TRƯỚC KHI DÙNG - convert model sang định dạng CTra
     ct2-transformers-converter \
         --model ./modules/speech_recognition/finetune_final \
         --output_dir ./modules/speech_recognition/finetune_final_ct2 \
-        --quantization int8
+        --quantization int8 \
+        --copy_files tokenizer.json preprocessor_config.json
+
+--copy_files LÀ BẮT BUỘC. Thiếu tokenizer.json thì faster-whisper lặng lẽ
+tải tokenizer của openai/whisper-tiny về dùng - sai từ vựng, transcript kém
+hẳn, và chỉ có MỘT dòng log lẫn giữa đống INFO báo hiệu điều đó.
 
 Nếu sau này fine-tune lại PhoWhisper (xem finetune_phowhisper.py), chạy lại
 lệnh convert trên với checkpoint mới để có bản CTranslate2 tương ứng.
@@ -28,11 +37,10 @@ lệnh convert trên với checkpoint mới để có bản CTranslate2 tương 
 from __future__ import annotations
 import io
 import logging
-from typing import Optional
 import numpy as np
 from pathlib import Path
 
-from stt_module import STTStrategy, normalize_audio_bytes, TARGET_SAMPLE_RATE
+from .stt_module import STTStrategy, normalize_audio_bytes
 
 logger = logging.getLogger("yolohome.stt.faster_whisper")
 logging.basicConfig(level=logging.INFO)
@@ -56,8 +64,9 @@ class FasterWhisperSTT(STTStrategy):
         stt.transcribe(audio_bytes)  # -> "bật đèn phòng khách"
 
     Args:
-        model_path: đường dẫn tới thư mục model ĐÃ CONVERT sang CTranslate2
-            (xem hướng dẫn convert ở đầu file). KHÔNG phải tên repo HF gốc.
+        model_path: thư mục model ĐÃ CONVERT sang CTranslate2, 
+                    hoặc repo id HuggingFace chứa bản đã convert. 
+                    KHÔNG phải checkpoint transformers gốc - xem hướng dẫn convert ở đầu file.
         device: "cpu" hoặc "cuda". Mặc định "cpu" vì mục đích chính của
             class này là tăng tốc inference trên máy không có GPU.
         compute_type: kiểu lượng tử hoá - "int8" (nhẹ nhất, khuyên dùng cho
