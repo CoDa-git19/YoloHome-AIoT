@@ -276,10 +276,17 @@ schema and sensor context.
 ```text
 modules/speech_recognition/
 ├── __init__.py
-└── stt_module.py
+├── stt_module.py              # PhoWhisper (transformers) — default engine
+├── stt_faster_whisper.py      # alternative engine (CTranslate2)
+├── evaluate_model.py          # measures WER / CER / latency
+├── finetune_final/            # fine-tuned checkpoint (weights via HuggingFace)
+├── finetune_final_ct2/        # same checkpoint converted to CTranslate2
+└── samples/                   # .wav files for evaluation (gitignored)
 ```
 
 Speech-to-Text. Output is a transcript passed on to the LLM pipeline.
+Both engines implement `STTStrategy` and are selected via `STT_ENGINE` in `.env`.
+Comparative measurements: `docs/STT-Evaluation.md`.
 
 ```text
 audio input
@@ -537,7 +544,6 @@ web_dashboard/
 ├── __init__.py
 ├── app.py
 ├── templates/
-└── static/
 ```
 
 Flask dashboard for viewing the pipeline and logs. Main tabs:
@@ -639,7 +645,8 @@ docs/
 ├── Module-Responsibilities.md
 ├── Face-Recognition.md
 ├── Setup-Windows.md
-└── Console-Test-Checklist.md
+├── STT-Evaluation.md
+└── Web_dashboard.md
 ```
 
 | File | Contents |
@@ -651,7 +658,8 @@ docs/
 | `Module-Responsibilities.md` | Who owns which file, and the boundaries not to cross |
 | `Face-Recognition.md` | Model training and runtime inference |
 | `Setup-Windows.md` | Ten traps encountered while setting up on Windows |
-| `Console-Test-Checklist.md` | Manual test scenarios through the console |
+| `STT-Evaluation.md` | WER/CER/latency: PhoWhisper vs faster-whisper |
+| `Web_dashboard.md` | Flask dashboard: routes, API endpoints, UI |
 
 ---
 
