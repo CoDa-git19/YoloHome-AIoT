@@ -54,7 +54,21 @@ class ConfigError(ValueError):
 
 
 def env_str(name: str, default: str = "") -> str:
-    return os.getenv(name, default).strip()
+    # Biến RỖNG cũng phải rơi về default, không chỉ biến không tồn tại.
+    #
+    # os.getenv(name, default) chỉ trả default khi biến VẮNG MẶT. Một dòng
+    # "CT2_MODEL_PATH=" trong .env khiến biến TỒN TẠI với giá trị "", và ""
+    # đi tiếp vào Path("") sẽ trỏ về thư mục hiện tại - .exists() trả True,
+    # nên mọi kiểm tra "đường dẫn model có tồn tại không" đều im lặng cho qua
+    # rồi vỡ lúc load model.
+    #
+    # Cùng quy ước với env_bool() bên dưới, vốn đã xử lý đúng từ đầu.
+    raw = os.getenv(name)
+
+    if raw is None or not raw.strip():
+        return default
+
+    return raw.strip()
 
 
 def env_bool(name: str, default: bool = False) -> bool:
