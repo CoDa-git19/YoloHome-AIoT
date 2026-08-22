@@ -588,10 +588,10 @@ def api_command_log_summary():
                 -- LUÔN bằng total.
                 SUM(CASE WHEN execution_status IN ('success','scheduled')
                          THEN 1 ELSE 0 END) AS success,
-                SUM(CASE WHEN execution_status NOT IN
+                SUM(CASE WHEN COALESCE(execution_status,'') NOT IN
                               ('success','scheduled','clarify','registry_request','waiting_auth')
                          THEN 1 ELSE 0 END) AS failed,
-                SUM(CASE WHEN execution_status IN ('clarify','registry_request','waiting_auth')
+                SUM(CASE WHEN COALESCE(execution_status,'') IN ('clarify','registry_request','waiting_auth')
                          THEN 1 ELSE 0 END) AS pending,
 
                 -- Tách riêng khỏi 'failed' (là tập con) vì dashboard có ô KPI

@@ -432,7 +432,16 @@ def save_snapshot(frame, prefix: str = "auth") -> str | None:
         filename = f"{prefix}_{stamp}.jpg"
 
         ok = cv2.imwrite(str(SNAPSHOTS_DIR / filename), frame)
-        return filename if ok else None
+        if not ok:
+            # imwrite trả False chứ KHÔNG ném lỗi. Ném ở đây để dùng chung
+            # một đường ghi log với khối except bên dưới.
+            # Nguyên nhân hay gặp nhất: đường dẫn dự án có ký tự ngoài cp1252
+            # (xem docs/Setup-Windows.md §0) - cv2 mở file qua ANSI API.
+            raise RuntimeError(
+                f"cv2.imwrite returned False for {filename}; "
+                "check the project path is pure ASCII"
+            )
+        return filename 
     except Exception as exc:
         # Nuốt lỗi để không làm sập luồng xác thực, NHƯNG phải để lại dấu vết.
         # `except: return None` trần khiến "chưa quét lần nào" và "lưu ảnh

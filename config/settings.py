@@ -412,20 +412,33 @@ def check_config() -> list[str]:
         )
 
     if not USE_MOCK_STT and STT_ENGINE == "faster-whisper":
-        # CT2_MODEL_PATH có thể là ĐƯỜNG DẪN ĐĨA hoặc REPO ID HuggingFace
-        # (faster-whisper nhận cả hai). Chỉ kiểm tra được cái thứ nhất; repo id
-        # phải đợi lúc tải mới biết. Dấu hiệu phân biệt: repo id có dạng
-        # "user/name" và không có ký tự phân cách đường dẫn của Windows.
-        _looks_like_repo_id = (
-            "/" in CT2_MODEL_PATH
+        # CT2_MODEL_PATH có thể là ĐƯỜNG DẪN ĐĨA hoặc REPO ID HuggingFace -
+        # faster-whisper nhận cả hai. Chỉ kiểm chứng được cái thứ nhất; repo id
+        # phải đợi lúc tải mới biết.
+        #
+        # KHÔNG đoán bằng hình dạng chuỗi. Bản trước suy ra repo id từ việc có
+        # "/" mà không có "\" - đúng trên Windows, sai hoàn toàn trên Linux/macOS,
+        # nơi "modules/speech_recognition/finetune_final_ct2" khớp cả hai điều
+        # kiện. Cảnh báo im lặng đúng ở nền tảng cần nó nhất.
+        #
+        # Dấu hiệu chắc chắn: đường dẫn thì TỒN TẠI trên đĩa, repo id thì không.
+        # Chỉ khi cả hai đều không đúng mới có gì để cảnh báo.
+        _ct2_on_disk = Path(CT2_MODEL_PATH).expanduser().exists()
+        _plausible_repo_id = (
+            CT2_MODEL_PATH.count("/") == 1
             and "\\" not in CT2_MODEL_PATH
-            and not Path(CT2_MODEL_PATH).is_absolute()
+            and not CT2_MODEL_PATH.startswith((".", "/", "~"))
         )
-        if not _looks_like_repo_id and not Path(CT2_MODEL_PATH).exists():
-            warnings.append(
+
+        if not _ct2_on_disk and not _plausible_repo_id:
+             warnings.append(
                 f"STT_ENGINE=faster-whisper nhưng không thấy {CT2_MODEL_PATH}. "
+                "Không phải thư mục trên đĩa, cũng không giống repo id HuggingFace "
+                "(dạng 'user/name'). "
                 "Model phải convert trước: ct2-transformers-converter --model "
                 "<checkpoint> --output_dir <ct2_dir> --quantization int8"
+                "<checkpoint> --output_dir <ct2_dir> --quantization int8 "
+                "--copy_files tokenizer.json"
             )
 
     # -------------------------------------------------------------------------
