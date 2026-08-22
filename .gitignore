@@ -48,6 +48,7 @@ logs/
 # =========================
 models/*
 !models/.gitkeep
+!models/README.md
 
 *.pkl
 *.joblib
