@@ -107,19 +107,10 @@
 
         <div class="px-4 pt-4">
             <h3 class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Device Status</h3>
-            <div class="flex flex-col gap-2">
-                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
-                    <div class="flex items-center gap-2 text-xs"><i class="far fa-lightbulb text-amber-400 w-4"></i> Living Room Light</div>
-                    <span id="sb-light-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
-                </div>
-                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
-                    <div class="flex items-center gap-2 text-xs"><i class="fas fa-fan text-sky-400 w-4"></i> Fan</div>
-                    <span id="sb-fan-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
-                </div>
-                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
-                    <div class="flex items-center gap-2 text-xs"><i class="fas fa-door-closed text-slate-400 w-4"></i> Main Door</div>
-                    <span id="sb-door-badge" class="text-[10px] font-semibold bg-slate-600/40 text-slate-300 px-2 py-0.5 rounded">--</span>
-                </div>
+            <!-- Dung dong tu /api/status: moi cap (phong, thiet bi) trong
+                 device_registry.json deu hien ra, khong khai bao cung. -->
+            <div id="sb-devices" class="flex flex-col gap-2">
+                <p class="text-[10px] text-slate-500 px-3 py-2">Đang tải...</p>
             </div>
         </div>
 
@@ -388,22 +379,44 @@
         }
     }
 
+    const DEVICE_ICON = {
+        light: 'far fa-lightbulb text-amber-400',
+        fan: 'fas fa-fan text-sky-400',
+        door: 'fas fa-door-closed text-slate-400',
+    };
+
+    function renderDeviceList(devices) {
+        const box = document.getElementById('sb-devices');
+        if (!box) return;
+
+        if (!Array.isArray(devices) || !devices.length) {
+            box.innerHTML = '<p class="text-[10px] text-slate-500 px-3 py-2">Không có thiết bị.</p>';
+            return;
+        }
+
+        box.innerHTML = devices.map((d) => {
+            const badge = Dash.stateBadge(d.state);
+            const icon = DEVICE_ICON[d.device] || 'fas fa-plug text-slate-400';
+            return `
+                <div class="flex justify-between items-center bg-white/5 px-3 py-2.5 rounded-lg">
+                    <div class="flex items-center gap-2 text-xs">
+                        <i class="${icon} w-4"></i> ${Dash.escapeHtml(d.label)}
+                    </div>
+                    <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${badge.cls}">${badge.text}</span>
+                </div>`;
+        }).join('');
+    }
+
+    // Tra trang thai mot thiet bi cu the tu danh sach (dung cho top metrics).
+    function deviceStateOf(devices, room, device) {
+        if (!Array.isArray(devices)) return null;
+        const hit = devices.find((d) => d.room === room && d.device === device);
+        return hit ? hit.state : null;
+    }
+    window.deviceStateOf = deviceStateOf;
+
     function applySidebarStatus(data) {
-        const light = Dash.stateBadge(data.devices.light);
-        const fan = Dash.stateBadge(data.devices.fan);
-        const door = Dash.stateBadge(data.devices.door);
-
-        const lightEl = document.getElementById('sb-light-badge');
-        lightEl.textContent = light.text;
-        lightEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${light.cls}`;
-
-        const fanEl = document.getElementById('sb-fan-badge');
-        fanEl.textContent = fan.text;
-        fanEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${fan.cls}`;
-
-        const doorEl = document.getElementById('sb-door-badge');
-        doorEl.textContent = door.text;
-        doorEl.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${door.cls}`;
+        renderDeviceList(data.devices);
 
         document.getElementById('sb-temp').textContent = `${data.sensors.temperature ?? '--'} °C`;
         document.getElementById('sb-humidity').textContent = `${data.sensors.humidity ?? '--'} %`;

@@ -26,10 +26,14 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
-from flask import (Flask, jsonify, redirect, render_template, request, send_from_directory, url_for)
+from flask import (
+    Flask, Response, jsonify, redirect, render_template, request,
+    send_from_directory, url_for,
+)
 
 from config import settings
 from database.init_db import init_db
@@ -58,6 +62,17 @@ def get_db_connection() -> sqlite3.Connection:
 # Người dùng đã có phản hồi trạng thái ngay trên dashboard nên cửa sổ đó thừa.
 FACE_SHOW_WINDOW = False
 
+# Chốt chặn thời lượng một kết nối stream xem trước. Không có nó, một tab bị
+# bỏ quên sẽ giữ thread của Flask vô thời hạn.
+PREVIEW_MAX_SECONDS = 120
+
+# Chất lượng JPEG cho Live Scanner. Nén ở mức này chỉ tốn ~1ms/khung và cho ra
+# ~19KB/khung - không đáng kể so với 188ms mà dlib cần để dò khuôn mặt.
+PREVIEW_JPEG_QUALITY = 70
+
+# Ranh giới multipart theo RFC phải dùng CRLF, không phải LF.
+CRLF = bytes((13, 10))
+
 
 # =============================================================================
 # Gateway: một MainOrchestrator duy nhất cho cả tiến trình Flask
@@ -78,6 +93,40 @@ _sensor_thread.start()
 # tranh nhau camera và micro. Endpoint trạng thái/log KHÔNG giữ khoá này nên
 # dashboard vẫn cập nhật bình thường trong lúc chờ.
 _pipeline_lock = threading.Lock()
+
+
+# =============================================================================
+# Live Scanner: phát khung hình quét mặt về TRÌNH DUYỆT (MJPEG)
+#
+# Người dùng đang nhìn trình duyệt, nên khung hình phải nằm ở đó. Cửa sổ OpenCV
+# trên máy chủ vừa bị Windows đẩy xuống taskbar, vừa không an toàn khi tạo từ
+# thread worker của Flask.
+#
+# Dùng Condition thay vì vòng lặp polling: stream được đánh thức NGAY khi có
+# khung mới, không mất thêm độ trễ chờ tới nhịp poll kế tiếp.
+# =============================================================================
+
+_preview_frame: bytes | None = None
+_preview_seq = 0
+_preview_cond = threading.Condition()
+
+
+def _publish_preview(frame: Any) -> None:
+    """Nhận khung hình đã vẽ overlay từ capture_frame() và nén JPEG."""
+    global _preview_frame, _preview_seq
+
+    import cv2
+
+    ok, buf = cv2.imencode(
+        ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), PREVIEW_JPEG_QUALITY]
+    )
+    if not ok:
+        return
+
+    with _preview_cond:
+        _preview_frame = buf.tobytes()
+        _preview_seq += 1
+        _preview_cond.notify_all()
 
 
 def _install_headless_frame_capturer() -> None:
@@ -109,6 +158,8 @@ def _install_headless_frame_capturer() -> None:
         require_blink=settings.FACE_REQUIRE_BLINK,
         camera_index=settings.CAMERA_INDEX,
         show_window=FACE_SHOW_WINDOW,
+        # Live Scanner hiển thị ngay trong trang web.
+        on_frame=_publish_preview,
     )
 
 
@@ -120,6 +171,48 @@ def device_state(device: str, room: str) -> str | None:
         {"device": device, "room": room, "action": "get_status"}
     )
     return result.get("state")
+
+
+# Nhãn hiển thị trên sidebar. Ghép từ tên phòng + tên thiết bị để khỏi phải
+# khai báo cứng, nhưng viết hoa đầu cho gọn mắt.
+_ROOM_LABEL = {
+    "living_room": "Living Room",
+    "bedroom": "Bedroom",
+    "main_door": "Main",
+}
+_DEVICE_LABEL = {"light": "Light", "fan": "Fan", "door": "Door"}
+
+
+def _all_device_states() -> list[dict[str, Any]]:
+    """
+    Trạng thái của MỌI cặp (phòng, thiết bị) trong device_registry.json.
+
+    Bản trước chỉ trả về 3 thiết bị cứng - đèn và quạt phòng khách, cửa chính.
+    Hệ quả: bật quạt PHÒNG NGỦ thì sidebar vẫn báo OFF, vì nó đang hiển thị
+    quạt phòng khách. Đọc thẳng từ registry thì thêm phòng mới cũng tự hiện,
+    không phải sửa code ở hai nơi.
+    """
+    try:
+        registry = load_device_registry()
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+
+    for room, room_devices in registry.items():
+        for device in room_devices:
+            default = "closed" if device == "door" else "off"
+            rows.append({
+                "room": room,
+                "device": device,
+                "state": device_state(device, room) or default,
+                "label": (
+                    f"{_ROOM_LABEL.get(room, room)} "
+                    f"{_DEVICE_LABEL.get(device, device)}"
+                ).strip(),
+            })
+
+    return rows
 
 
 # =============================================================================
@@ -222,11 +315,7 @@ def _module_status() -> dict[str, Any]:
 def api_status():
     sensors = dict(orchestrator.latest_sensor_data or {})
 
-    devices = {
-        "light": device_state("light", "living_room") or "off",
-        "fan": device_state("fan", "living_room") or "off",
-        "door": device_state("door", "main_door") or "closed",
-    }
+    devices = _all_device_states()
 
     # Ở chế độ mô phỏng KHÔNG có kết nối Adafruit nào cả. Báo "connected" chỉ
     # vì .env có sẵn username/key là nói dối người xem dashboard.
@@ -445,19 +534,23 @@ def api_command():
     return jsonify(_run_pipeline(transcript, session_id, source="text"))
 
 
-@app.route('/api/voice', methods=['POST'])
-def api_voice():
+def _transcribe_request() -> tuple[str | None, Any]:
     """
-    Contract A: audio -> STT -> pipeline chung.
+    Đọc audio từ request rồi chạy STT.
 
-    Nhận audio ở ĐỊNH DẠNG BẤT KỲ (trình duyệt thường gửi webm/opus qua
-    MediaRecorder); stt_module tự chuẩn hoá bằng ffmpeg trước khi đưa vào model.
+    Nhận audio ở ĐỊNH DẠNG BẤT KỲ (trình duyệt gửi webm/opus qua MediaRecorder);
+    stt_module tự chuẩn hoá bằng ffmpeg trước khi đưa vào model.
+
+    Returns:
+        (transcript, None) khi thành công, hoặc (None, response_lỗi). Tách riêng
+        vì cả /api/transcribe và /api/voice đều cần đúng bước này - khác nhau chỉ
+        ở việc có chạy tiếp pipeline hay không.
     """
     if orchestrator.stt_engine is None:
-        return jsonify({
+        return None, (jsonify({
             "error": "stt_unavailable",
             "message": "Chưa cấu hình nhận dạng giọng nói. Bạn hãy nhập bằng văn bản.",
-        }), 503
+        }), 503)
 
     if 'audio' in request.files:
         audio_bytes = request.files['audio'].read()
@@ -465,34 +558,112 @@ def api_voice():
         audio_bytes = request.get_data()
 
     if not audio_bytes:
-        return jsonify({
+        return None, (jsonify({
             "error": "empty_audio",
             "message": "Không nhận được dữ liệu âm thanh.",
-        }), 400
-
-    session_id = request.form.get('session_id') or None
+        }), 400)
 
     with _pipeline_lock:
         try:
             transcript = orchestrator.stt_engine.transcribe(audio_bytes)
         except Exception as exc:
-            return jsonify({
+            return None, (jsonify({
                 "error": "stt_failed",
                 "message": f"Không nhận dạng được giọng nói: {exc}",
-            }), 500
+            }), 500)
 
     # transcribe() nuốt mọi lỗi và trả "" - thiếu ffmpeg, audio hỏng, hoặc
     # người dùng không nói gì đều rơi vào đây.
     if not transcript or not transcript.strip():
-        return jsonify({
+        return None, (jsonify({
             "error": "empty_transcript",
             "message": (
                 "Mình chưa nghe rõ. Bạn nói lại giúp mình nhé "
                 "(nếu lỗi lặp lại, kiểm tra xem máy chủ đã cài ffmpeg chưa)."
             ),
-        }), 422
+        }), 422)
 
-    return jsonify(_run_pipeline(transcript.strip(), session_id, source="voice"))
+    return transcript.strip(), None
+
+
+@app.route('/api/transcribe', methods=['POST'])
+def api_transcribe():
+    """
+    CHỈ phiên âm: audio -> transcript. KHÔNG chạy lệnh.
+
+    Nút micro gọi endpoint này trước để chữ hiện ra trong ô nhập lệnh NGAY khi
+    nhận dạng xong, rồi frontend mới gửi tiếp sang /api/command. Gộp làm một
+    bước sẽ khiến người dùng nhìn màn hình trống suốt cả quá trình xác thực
+    khuôn mặt (có thể tới 15 giây) mà không biết hệ thống nghe được gì.
+    """
+    transcript, error = _transcribe_request()
+    if error is not None:
+        return error
+    if transcript is None:  # không xảy ra theo hợp đồng của _transcribe_request
+        return jsonify({"error": "stt_failed", "message": "Không nhận dạng được."}), 500
+
+    return jsonify({"transcript": transcript, "source": "voice"})
+
+
+@app.route('/api/voice', methods=['POST'])
+def api_voice():
+    """
+    Contract A trọn gói: audio -> STT -> pipeline, trong MỘT request.
+
+    Giữ lại cho client không cần hiển thị transcript giữa chừng. Giao diện web
+    dùng /api/transcribe + /api/command để phản hồi sớm hơn.
+    """
+    transcript, error = _transcribe_request()
+    if error is not None:
+        return error
+    if transcript is None:
+        return jsonify({"error": "stt_failed", "message": "Không nhận dạng được."}), 500
+
+    session_id = request.form.get('session_id') or None
+    return jsonify(_run_pipeline(transcript, session_id, source="voice"))
+
+
+@app.route('/api/face-preview')
+def api_face_preview():
+    """
+    Stream MJPEG khung hình quét khuôn mặt cho trình duyệt.
+
+    Chờ trên Condition nên khung mới được đẩy đi NGAY, không có độ trễ polling.
+    Frontend mở stream lúc gửi lệnh và đóng khi có kết quả, nên kết nối luôn có
+    vòng đời hữu hạn.
+    """
+    def generate():
+        last_seq = -1
+        started = time.time()
+
+        while True:
+            remaining = PREVIEW_MAX_SECONDS - (time.time() - started)
+            if remaining <= 0:
+                return
+
+            with _preview_cond:
+                if _preview_seq == last_seq:
+                    # Chờ có khung mới; timeout để còn kiểm tra hạn tổng.
+                    _preview_cond.wait(timeout=min(1.0, remaining))
+                seq, frame = _preview_seq, _preview_frame
+
+            if frame is None or seq == last_seq:
+                continue
+
+            last_seq = seq
+            boundary = (
+                b"--frame" + CRLF
+                + b"Content-Type: image/jpeg" + CRLF
+                + b"Content-Length: " + str(len(frame)).encode() + CRLF
+                + CRLF
+            )
+            yield boundary + frame + CRLF
+
+    return Response(
+        generate(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 # =============================================================================

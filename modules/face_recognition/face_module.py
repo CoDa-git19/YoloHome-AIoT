@@ -41,7 +41,7 @@ import math
 import pickle
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from config.settings import MODELS_DIR
 
@@ -296,6 +296,7 @@ def capture_frame(
     require_blink: bool = False,
     show_window: bool = True,
     camera_index: int = 0,
+    on_frame: Callable[[Any], None] | None = None,
 ):
     """
     Quét khuôn mặt từ camera, hỗ trợ liveness detection (chớp mắt).
@@ -312,6 +313,10 @@ def capture_frame(
         require_blink: bắt buộc chớp mắt trước khi chấp nhận khung hình.
             Chống tấn công bằng ảnh in hoặc video phát trên điện thoại.
         show_window: tắt khi chạy headless (máy chủ không có màn hình).
+        on_frame: hàm nhận từng khung hình ĐÃ VẼ overlay, gọi mỗi vòng lặp.
+            Dùng để phát hình đi nơi khác - web dashboard stream về trình
+            duyệt thay vì mở cửa sổ OpenCV trên máy chủ. Ngoại lệ từ hàm này
+            bị nuốt: người xem hỏng không được phép làm hỏng xác thực.
         camera_index: chỉ số webcam, chỉ dùng khi cap=None. Máy có webcam rời
             hoặc phần mềm camera ảo (OBS, Zoom, DroidCam) thường đẩy webcam
             thật sang index 1-2; không cấu hình được thì Face Auth hỏng mà
@@ -384,16 +389,29 @@ def capture_frame(
                     has_blinked = True
                     break
 
-        if show_window:
+        # Vẽ overlay khi có người xem - qua cửa sổ OpenCV hoặc qua on_frame.
+        if show_window or on_frame is not None:
             _draw_overlay(frame, locations, require_blink, has_blinked, current_ear)
+
+        if show_window:
             cv2.imshow("Face ID Scanner", frame)
             cv2.waitKey(1)
+
+        if on_frame is not None:
+            try:
+                on_frame(frame)
+            except Exception:
+                pass
 
         if locations and (not require_blink or has_blinked):
             best_frame = clean_frame
             if show_window:
                 # Giữ hình 1 giây để người dùng kịp thấy thông báo xác nhận.
                 cv2.waitKey(1000)
+            elif on_frame is not None:
+                # Tương đương cho người xem qua web: giữ khung "Liveness
+                # Confirmed!" đủ lâu để đọc được, thay vì tắt ngay.
+                time.sleep(1.0)
             break
 
     # Chỉ đóng camera nếu CHÍNH HÀM NÀY mở nó. Đóng camera của người khác sẽ
