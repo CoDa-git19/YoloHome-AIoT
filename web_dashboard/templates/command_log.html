@@ -4,27 +4,27 @@
 <div class="flex flex-col gap-4 pb-4">
     <!-- 3.1 KPI Summary Cards -->
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4">
             <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-comment-dots text-blue-500"></i> Total Commands</div>
             <p id="kpi-total" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
             <p class="text-[10px] text-slate-400">All time</p>
         </div>
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4">
             <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-circle-check text-emerald-500"></i> Success Rate</div>
             <p id="kpi-success-rate" class="text-xl font-bold text-emerald-500">--</p>
             <p id="kpi-success-count" class="text-[10px] text-slate-400">-- success</p>
         </div>
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4">
             <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-circle-xmark text-rose-500"></i> Rejected</div>
             <p id="kpi-rejected" class="text-xl font-bold text-rose-500">--</p>
             <p id="kpi-rejected-rate" class="text-[10px] text-slate-400">--%</p>
         </div>
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4">
             <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-lock text-amber-500"></i> Requires Auth</div>
             <p id="kpi-auth" class="text-xl font-bold text-amber-500">--</p>
             <p id="kpi-auth-rate" class="text-[10px] text-slate-400">--%</p>
         </div>
-        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 sm:p-4">
             <div class="flex items-center gap-2 text-slate-400 text-xs mb-1"><i class="fas fa-stopwatch text-blue-500"></i> Avg Latency</div>
             <p id="kpi-latency" class="text-xl font-bold text-slate-800 dark:text-white">--</p>
             <p class="text-[10px] text-slate-400">ms / command</p>
@@ -34,14 +34,14 @@
     <div class="flex flex-col lg:flex-row gap-4 items-start">
         <!-- 3.2 Data table + filters -->
         <div class="w-full lg:w-[68%] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
-            <div class="flex flex-wrap items-center gap-2 mb-3">
-                <input type="date" id="f-date-from" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+            <div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
+                <input type="date" id="f-date-from" class="flex-1 min-w-[130px] sm:flex-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
                 <span class="text-slate-400 text-xs">→</span>
-                <input type="date" id="f-date-to" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
-                <select id="f-device" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <input type="date" id="f-date-to" class="flex-1 min-w-[130px] sm:flex-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <select id="f-device" class="flex-1 min-w-[130px] sm:flex-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
                     <option value="all">All Devices</option>
                 </select>
-                <select id="f-status" class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
+                <select id="f-status" class="flex-1 min-w-[130px] sm:flex-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded-lg px-2 py-1.5 outline-none">
                     <option value="all">All Results</option>
                     <option value="success">success</option>
                     <option value="failed">failed</option>
@@ -58,7 +58,7 @@
             </div>
 
             <div class="overflow-x-auto custom-scrollbar border border-slate-100 dark:border-slate-800 rounded-lg">
-                <table class="w-full text-left border-collapse">
+                <table class="w-full text-left border-collapse min-w-[760px]">
                     <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 dark:bg-slate-800">
                         <tr>
                             <th class="p-2.5 font-medium">Time</th>
