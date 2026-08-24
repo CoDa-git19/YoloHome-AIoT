@@ -6,7 +6,7 @@
     <div class="w-full lg:w-1/2 flex flex-col gap-4">
 
         <!-- 2.1 Top Metrics Bar -->
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
             <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col items-center justify-center text-center">
                 <i class="fas fa-thermometer-half text-blue-500 text-lg mb-1"></i>
                 <span id="tm-temp" class="text-sm font-bold text-slate-800 dark:text-white">-- °C</span>
@@ -47,7 +47,8 @@
         <!-- 2.2 Agent Pipeline Tracker -->
         <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
             <h3 class="font-semibold mb-4 text-slate-800 dark:text-white text-sm">Agent Pipeline</h3>
-            <div class="flex justify-between items-center text-[10px] font-medium text-slate-400" id="pipeline-tracker">
+            <div class="overflow-x-auto custom-scrollbar -mx-1 px-1">
+            <div class="flex justify-between items-center gap-2 text-[10px] font-medium text-slate-400 min-w-[480px]" id="pipeline-tracker">
                 <div class="flex flex-col items-center gap-1.5" data-step="stt">
                     <div class="step-circle w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">1</div>
                     <span class="text-slate-500 dark:text-slate-400">STT / Input</span>
@@ -77,6 +78,7 @@
                     <span class="text-slate-500 dark:text-slate-400">Execution</span>
                     <span class="step-label font-semibold text-slate-400">WAIT</span>
                 </div>
+            </div>
             </div>
         </div>
 
@@ -108,7 +110,7 @@
             </div>
 
             <!-- 3,4,5 Result Cards -->
-            <div class="grid grid-cols-3 gap-3 mt-1">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
                 <div class="border border-slate-200 dark:border-slate-800 rounded-lg p-3">
                     <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">3. Validation</p>
                     <p id="validation-status" class="text-sm font-bold text-slate-400">--</p>
@@ -164,7 +166,7 @@
                 </button>
             </div>
             <div class="overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse">
+                <table class="w-full text-left border-collapse min-w-[620px]">
                     <thead class="text-[10px] text-slate-400 uppercase">
                         <tr>
                             <th class="p-2 font-medium">Time</th>
@@ -191,7 +193,7 @@
                 </button>
             </div>
             <div class="overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse">
+                <table class="w-full text-left border-collapse min-w-[620px]">
                     <thead class="text-[10px] text-slate-400 uppercase">
                         <tr>
                             <th class="p-2 font-medium">Time</th>
