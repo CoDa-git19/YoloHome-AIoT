@@ -25,23 +25,42 @@ Xem docs/Integration-Contracts.md để biết chi tiết 2 contract.
 from __future__ import annotations
 
 import argparse
+import logging
 import threading
 import time
 from typing import Any, Callable
 
+# Cấu hình logging TRƯỚC mọi import nội bộ.
+#
+# stt_module.py gọi logging.basicConfig(level=INFO) ngay lúc import. Vì
+# basicConfig là no-op khi root logger đã có handler, ai gọi trước thì người
+# đó quyết định mức log - và trước đây người gọi trước lại là STT. Hệ quả:
+# log của console có hiện hay không phụ thuộc vào việc chạy STT thật hay mock.
+#
+# Đặt ở đây thì entry point nắm quyền. Dòng setLevel cho paho là bắt buộc:
+# thiếu nó, mỗi gói MQTT đều in một dòng và console ngập tới mức không còn
+# nhìn thấy dòng ERROR nào.
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("paho").setLevel(logging.WARNING)
+
 from config import settings
 
-from modules.hardware_gateway.hardware_module import HardwareModule
-from modules.llm_integration.llm_strategy import GeminiLLMStrategy, MockLLMStrategy
+from modules.hardware_gateway.hardware_module import HardwareModule 
+from modules.llm_integration.llm_strategy import (  
+    GeminiLLMStrategy, MockLLMStrategy,
+)
 
 from services.command_service import CommandService
-from services.logging_service import (
+from services.logging_service import (  
     LoggingService, log_error, log_face, update_command_result,
 )
 from system_core.observers import (
     RuleObserver, ScheduleObserver, SensorLoggingObserver, SensorPersistObserver,
 )
-from services.rule_service import RuleService
+from services.rule_service import RuleService  
 
 
 SENSOR_POLL_INTERVAL = 2.0

@@ -87,7 +87,7 @@ def run_evaluation(stt: STTStrategy, test_set: List[TestSample]) -> pd.DataFrame
     missing = []
 
     # Lượt warm-up: model được nạp LAZY ở lần transcribe() đầu tiên, nên mẫu
-    # số 1 gánh luôn thời gian tải model (~9s với transformers, ~5s với CT2)
+    # số 1 gánh luôn thời gian tải model (10.8s với transformers, ~5s với CT2)
     # trong khi các mẫu sau chỉ mất ~1.5s và ~0.9s. Tính lượt đó vào trung
     # bình làm latency báo cáo cao gấp 3 lần thực tế - đo tốc độ khởi động
     # chứ không phải tốc độ nhận dạng.

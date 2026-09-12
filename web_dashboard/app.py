@@ -24,21 +24,41 @@ bước pipeline và latency - những thứ một chuỗi trả lời không ma
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from flask import (
+# Cấu hình logging TRƯỚC mọi import nội bộ.
+#
+# stt_module.py gọi logging.basicConfig(level=INFO) ngay lúc import. Vì
+# basicConfig là no-op khi root logger đã có handler, ai gọi trước thì người
+# đó quyết định mức log - và trước đây người gọi trước lại là STT. Hệ quả:
+# log của dashboard có hiện hay không phụ thuộc vào việc chạy STT thật hay
+# mock, một sự phụ thuộc không ai cố ý tạo ra.
+#
+# Đặt ở đây thì entry point nắm quyền, còn lời gọi trong stt_module thành vô
+# hại. Hai dòng setLevel là bắt buộc: thiếu chúng, Flask in mọi HTTP request
+# và paho in mọi gói MQTT, console ngập tới mức không còn nhìn thấy dòng
+# ERROR nào - tức là phản tác dụng.
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logging.getLogger("paho").setLevel(logging.WARNING)
+
+from flask import (  # noqa: E402
     Flask, Response, jsonify, redirect, render_template, request,
     send_from_directory, url_for,
 )
 
-from config import settings
-from database.init_db import init_db
-from modules.llm_integration.llm_module import load_device_registry
-from system_core.main import MainOrchestrator
+from config import settings  # noqa: E402
+from database.init_db import init_db  # noqa: E402
+from modules.llm_integration.llm_module import load_device_registry  # noqa: E402
+from system_core.main import MainOrchestrator  # noqa: E402
 
 app = Flask(__name__)
 
@@ -999,4 +1019,3 @@ if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))
     print(f"[Web Dashboard] Khởi động server tại http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
-

@@ -11,6 +11,30 @@ class ContractError(TypeError):
     """Một thành phần không tuân thủ hợp đồng interface."""
 
 
+def _record(module: str, message: str) -> None:
+    """
+    Ghi một vi phạm hợp đồng ra CẢ HAI kênh.
+
+    logger.error()  -> hiện ngay trên console lúc đang chạy.
+    log_error()     -> lưu vào bảng error_log, truy lại được sau khi tắt máy.
+
+    Chỉ ghi console là chưa đủ: không entry point nào cấu hình logging, nên
+    dòng log biến mất cùng cửa sổ terminal. Vi phạm hợp đồng là loại lỗi âm
+    thầm nhất trong hệ thống nên nó phải nằm trong database.
+
+    Import cục bộ để system_core không phụ thuộc services lúc import module.
+    """
+    logger.error(message)
+
+    try:
+        from services.logging_service import log_error
+
+        log_error(module, message)
+    except Exception as exc:  # noqa: BLE001
+        # Không được ném ngược lên: hàm này chạy trong đường đi của lệnh thật.
+        logger.error("Không ghi được error_log: %s", exc)
+
+
 # =============================================================================
 # Hợp đồng 1: LLMStrategy
 # =============================================================================
@@ -96,16 +120,16 @@ def check_status_result(
     "không xác định được trạng thái". Đó chính là vấn đề: hỏng âm thầm,
     không ai biết cho tới khi đứng trước hội đồng.
 
-    Nên phải la lên.
+    Nên phải la lên - và la vào chỗ nghe lại được, tức là error_log.
     """
     if command.get("action") != "get_status":
         return
 
     if not isinstance(result, dict):
-        logger.error(
-            "VI PHẠM HỢP ĐỒNG: %s.execute_command() trả về %s thay vì dict.",
-            hardware_name,
-            type(result).__name__,
+        _record(
+            "contract",
+            f"VI PHẠM HỢP ĐỒNG: {hardware_name}.execute_command() trả về "
+            f"{type(result).__name__} thay vì dict.",
         )
         return
 
@@ -115,21 +139,20 @@ def check_status_result(
     state = result.get("state")
 
     if state is None:
-        logger.error(
-            "VI PHẠM HỢP ĐỒNG: %s.execute_command(action=get_status) không trả "
-            'về "state". Người dùng sẽ luôn nhận "không xác định được trạng thái". '
-            'Phần cứng phải trả {"status": "success", "state": "on"|"off"|"open"|"closed"}.',
-            hardware_name,
+        _record(
+            "contract",
+            f"VI PHẠM HỢP ĐỒNG: {hardware_name}.execute_command(action=get_status) "
+            'không trả về "state". Người dùng sẽ luôn nhận "không xác định được '
+            'trạng thái". Phần cứng phải trả {"status": "success", '
+            '"state": "on"|"off"|"open"|"closed"}.',
         )
         return
 
     if state not in VALID_DEVICE_STATES:
-        logger.error(
-            'VI PHẠM HỢP ĐỒNG: %s trả về state=%r không hợp lệ. '
-            "Chỉ chấp nhận: %s.",
-            hardware_name,
-            state,
-            ", ".join(sorted(VALID_DEVICE_STATES)),
+        _record(
+            "contract",
+            f"VI PHẠM HỢP ĐỒNG: {hardware_name} trả về state={state!r} không hợp lệ. "
+            f"Chỉ chấp nhận: {', '.join(sorted(VALID_DEVICE_STATES))}.",
         )
 
 

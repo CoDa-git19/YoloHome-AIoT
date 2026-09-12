@@ -23,7 +23,7 @@ BƯỚC BẮT BUỘC TRƯỚC KHI DÙNG - convert model sang định dạng CTra
         --model ./modules/speech_recognition/finetune_final \
         --output_dir ./modules/speech_recognition/finetune_final_ct2 \
         --quantization int8 \
-        --copy_files tokenizer.json preprocessor_config.json
+        --copy_files tokenizer.json processor_config.json
 
 --copy_files LÀ BẮT BUỘC. Thiếu tokenizer.json thì faster-whisper lặng lẽ
 tải tokenizer của openai/whisper-tiny về dùng - sai từ vựng, transcript kém
