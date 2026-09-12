@@ -34,7 +34,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 _MODULE_DIR = Path(__file__).resolve().parent
 
-DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL", str(_MODULE_DIR / "finetune_final"))
+DEFAULT_MODEL_NAME = os.environ.get("PHOWHISPER_MODEL") or str(_MODULE_DIR / "finetune_final")
 TARGET_SAMPLE_RATE = 16_000  # PhoWhisper (Whisper backbone) yêu cầu 16kHz mono
 
 

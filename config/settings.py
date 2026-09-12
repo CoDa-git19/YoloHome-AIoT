@@ -436,7 +436,6 @@ def check_config() -> list[str]:
                 "Không phải thư mục trên đĩa, cũng không giống repo id HuggingFace "
                 "(dạng 'user/name'). "
                 "Model phải convert trước: ct2-transformers-converter --model "
-                "<checkpoint> --output_dir <ct2_dir> --quantization int8"
                 "<checkpoint> --output_dir <ct2_dir> --quantization int8 "
                 "--copy_files tokenizer.json"
             )

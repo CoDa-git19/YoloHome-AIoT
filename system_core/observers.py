@@ -17,6 +17,29 @@ SensorData = dict[str, Any]
 #   -> Lưu lịch sử bằng SensorPersistObserver.
 
 
+def _record(module: str, message: str) -> None:
+    """
+    Ghi lỗi ra CẢ HAI kênh: console và bảng error_log.
+
+    Mọi lỗi trong file này đều thuộc loại hỏng âm thầm - observer chết thì
+    automation ngừng chạy mà không ai biết, lệnh hẹn giờ hỏng thì người dùng
+    đã được báo "đã hẹn giờ xong" rồi. Chỉ ghi ra console là không đủ, vì
+    không entry point nào cấu hình logging và dòng log mất khi tắt terminal.
+
+    Import cục bộ để system_core không phụ thuộc services lúc import module,
+    và bọc try/except vì hàm này được gọi từ trong các khối xử lý lỗi - nó
+    tuyệt đối không được ném thêm lỗi mới.
+    """
+    logger.error(message)
+
+    try:
+        from services.logging_service import log_error
+
+        log_error(module, message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Không ghi được error_log: %s", exc)
+
+
 # =============================================================================
 # Interfaces
 # =============================================================================
@@ -61,6 +84,10 @@ class Subject(ABC):
         Nếu Adafruit sập, rule engine vẫn phải chạy - nếu không thì cái quạt
         sẽ không bao giờ tự bật.
 
+        Cô lập lỗi mà không ghi lại thì đổi một kiểu hỏng âm thầm lấy một kiểu
+        khác: SensorPersistObserver chết thì sensor_log ngừng ghi vĩnh viễn và
+        không để lại dấu vết nào. Vì vậy mỗi lỗi đều vào error_log.
+
         Returns:
             Danh sách lỗi đã xảy ra (rỗng nếu mọi observer đều ổn).
         """
@@ -71,10 +98,9 @@ class Subject(ABC):
                 observer.update(sensor_data)
             except Exception as exc:
                 errors.append(exc)
-                logger.error(
-                    "Observer %s thất bại: %s",
-                    type(observer).__name__,
-                    exc,
+                _record(
+                    "observer",
+                    f"Observer {type(observer).__name__} thất bại: {exc}",
                 )
 
         return errors
@@ -143,12 +169,16 @@ class RuleObserver(Observer):
             # lúc tạo (validator -> safety_rule_violation). Nhưng nếu có ai
             # lách được vào database, đây là chốt chặn cuối: rule chạy tự động
             # nên KHÔNG có ai đứng trước camera để xác thực.
+            #
+            # Chốt này kích hoạt nghĩa là có thứ đã ghi thẳng vào database -
+            # một sự kiện an ninh, nên nó vào error_log dưới tag security_policy
+            # cùng chỗ với các quyết định chặn của CommandService.
             if self._requires_face_auth(command):
-                logger.error(
-                    "Chặn automation rule cần Face Auth: %s.%s. "
+                _record(
+                    "security_policy",
+                    f"Chặn automation rule cần Face Auth: "
+                    f"{command['device']}.{command['action']}. "
                     "Rule tự chạy thì không thể xác thực khuôn mặt.",
-                    command["device"],
-                    command["action"],
                 )
                 continue
 
@@ -188,6 +218,11 @@ class ScheduleObserver(Observer):
     nên hành động cần Face Auth không bao giờ được chạy từ đây. Validator đã
     chặn lúc tạo; đây là lớp thứ hai, cho trường hợp có ai đó ghi thẳng vào
     bảng schedule.
+
+    MỌI LỖI Ở ĐÂY ĐỀU ÂM THẦM
+    -------------------------
+    Người dùng đã nghe "đã hẹn giờ xong" từ trước đó rất lâu. Lịch không chạy
+    được thì không có ai để báo, nên toàn bộ nhánh lỗi đều ghi error_log.
     """
 
     def __init__(
@@ -215,22 +250,26 @@ class ScheduleObserver(Observer):
 
             if RuleObserver._requires_face_auth(command):
                 self.blocked_count += 1
-                logger.error(
-                    "Chặn lệnh hẹn giờ cần Face Auth: %s.%s. "
+                _record(
+                    "security_policy",
+                    f"Chặn lệnh hẹn giờ cần Face Auth: "
+                    f"{command.get('device')}.{command.get('action')}. "
                     "Lệnh hẹn giờ chạy tự động nên không thể xác thực khuôn mặt.",
-                    command.get("device"),
-                    command.get("action"),
                 )
                 continue
 
             try:
                 ok = self.command_executor.execute_authorized_command(command)
             except Exception as exc:
-                logger.error("Không chạy được lệnh hẹn giờ id=%s: %s", row.get("id"), exc)
+                _record(
+                    "scheduler",
+                    f"Không chạy được lệnh hẹn giờ id={row.get('id')}: {exc}",
+                )
                 continue
 
             if ok:
                 self.executed_count += 1
+
     def _due_schedules(self) -> list[dict[str, Any]]:
         """
         get_schedules() vừa ĐỌC vừa ĐÁNH DẤU đã dùng trong một giao dịch, nên
@@ -239,7 +278,7 @@ class ScheduleObserver(Observer):
         try:
             return list(self.schedule_reader() or [])
         except Exception as exc:
-            logger.error("Không đọc được lịch hẹn giờ: %s", exc)
+            _record("scheduler", f"Không đọc được lịch hẹn giờ: {exc}")
             return []
 
     @staticmethod
@@ -251,11 +290,11 @@ class ScheduleObserver(Observer):
         try:
             command = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
         except (TypeError, ValueError) as exc:
-            logger.error("Lịch id=%s có json_cmd hỏng: %s", row.get("id"), exc)
+            _record("scheduler", f"Lịch id={row.get('id')} có json_cmd hỏng: {exc}")
             return None
 
         if not command.get("device") or not command.get("action"):
-            logger.error("Lịch id=%s thiếu device hoặc action", row.get("id"))
+            _record("scheduler", f"Lịch id={row.get('id')} thiếu device hoặc action")
             return None
 
         # Chạy như một lệnh điều khiển bình thường: bảng schedule lưu ý định,
