@@ -532,7 +532,7 @@ ct2-transformers-converter `
     --model ./modules/speech_recognition/finetune_final `
     --output_dir ./modules/speech_recognition/finetune_final_ct2 `
     --quantization int8 `
-    --copy_files tokenizer.json preprocessor_config.json
+    --copy_files tokenizer.json processor_config.json
 ```
 
 For an already-converted directory, copy the file across and verify:
